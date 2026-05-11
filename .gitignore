@@ -1,0 +1,19 @@
+# Windows build artifacts
+windows/build/
+
+# Android build artifacts
+android/.gradle/
+android/app/build/
+android/local.properties
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# vcpkg (installed packages are reproducible via vcpkg.json)
+# C:/vcpkg is outside this repo — no need to ignore
+
+# OS
+Thumbs.db
+.DS_Store
