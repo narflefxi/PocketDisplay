@@ -202,6 +202,9 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         runOnUiThread { applyFillTransform() }
     }
 
+    private var dbgLastNx = -1f
+    private var dbgLastNy = -1f
+
     private fun onWindowsCursorPos(nx: Float, ny: Float) {
         val vw = binding.textureView.width.toFloat()
         val vh = binding.textureView.height.toFloat()
@@ -209,6 +212,15 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         // so mirror the cursor X to keep it aligned with the visible content.
         val sx = (1f - nx) * vw
         val sy = ny * vh
+
+        // DEBUG: log whenever position jumps by >0.05 in either axis
+        if (Math.abs(nx - dbgLastNx) > 0.05f || Math.abs(ny - dbgLastNy) > 0.05f) {
+            dbgLastNx = nx; dbgLastNy = ny
+            Log.d("CursorDebug",
+                "RECEIVED  nx=%.4f ny=%.4f  |  view=${vw.toInt()}x${vh.toInt()}  |  PLACED  sx=%.1f sy=%.1f"
+                    .format(nx, ny, sx, sy))
+        }
+
         runOnUiThread { binding.cursorOverlay.moveTo(sx, sy) }
     }
 

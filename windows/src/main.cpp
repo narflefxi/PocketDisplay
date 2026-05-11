@@ -301,11 +301,24 @@ int main(int argc, char* argv[]) {
     const int screen_w = GetSystemMetrics(SM_CXSCREEN);
     const int screen_h = GetSystemMetrics(SM_CYSCREEN);
     std::thread cursor_thread([&]() {
+        int log_tick = 0;
         while (g_running) {
             POINT pos = {};
             if (GetCursorPos(&pos)) {
                 float nx = static_cast<float>(pos.x) / screen_w;
                 float ny = static_cast<float>(pos.y) / screen_h;
+
+                // DEBUG: print once per second (~60 ticks × 16 ms)
+                if (++log_tick >= 60) {
+                    log_tick = 0;
+                    std::cout << "\n[CURSOR SENT]"
+                              << "  px=" << pos.x << "/" << screen_w
+                              << "  py=" << pos.y << "/" << screen_h
+                              << "  nx=" << std::fixed << std::setprecision(4) << nx
+                              << "  ny=" << ny << "\n";
+                    std::cout.flush();
+                }
+
                 uint32_t nx_be, ny_be;
                 std::memcpy(&nx_be, &nx, 4); nx_be = htonl(nx_be);
                 std::memcpy(&ny_be, &ny, 4); ny_be = htonl(ny_be);
