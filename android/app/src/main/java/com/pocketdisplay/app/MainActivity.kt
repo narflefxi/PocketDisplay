@@ -203,7 +203,12 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     }
 
     private fun onWindowsCursorPos(nx: Float, ny: Float) {
-        val (sx, sy) = toScreenPosition(nx, ny)
+        val vw = binding.textureView.width.toFloat()
+        val vh = binding.textureView.height.toFloat()
+        // Video is displayed with a horizontal flip (negative X scale in applyFillTransform),
+        // so mirror the cursor X to keep it aligned with the visible content.
+        val sx = (1f - nx) * vw
+        val sy = ny * vh
         runOnUiThread { binding.cursorOverlay.moveTo(sx, sy) }
     }
 
