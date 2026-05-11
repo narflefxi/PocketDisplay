@@ -79,6 +79,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         touchSender?.close()
         touchSender = null
         videoW = 0; videoH = 0
+        binding.cursorOverlay.hide()
         binding.btnConnect.text = "Start Listening"
         updateStatus("Stopped")
     }
@@ -128,18 +129,22 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
             MotionEvent.ACTION_DOWN -> {
                 touchDownX = event.x
                 touchDownY = event.y
+                binding.cursorOverlay.moveTo(event.x, event.y)
                 if (sender != null && hasVideo) {
                     val (nx, ny) = toNormalized(event.x, event.y)
                     sender.send(TouchSender.EventType.DOWN, nx, ny)
                 }
             }
             MotionEvent.ACTION_MOVE -> {
+                binding.cursorOverlay.moveTo(event.x, event.y)
                 if (sender != null && hasVideo) {
                     val (nx, ny) = toNormalized(event.x, event.y)
                     sender.send(TouchSender.EventType.MOVE, nx, ny)
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                // Cursor stays visible at lift position — mimics a persistent mouse cursor.
+                binding.cursorOverlay.moveTo(event.x, event.y)
                 if (sender != null && hasVideo) {
                     val (nx, ny) = toNormalized(event.x, event.y)
                     sender.send(TouchSender.EventType.UP, nx, ny)

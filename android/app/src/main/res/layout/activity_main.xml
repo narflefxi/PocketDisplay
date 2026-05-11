@@ -16,6 +16,16 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <!-- Cursor overlay — sits above video, passes touches through -->
+    <com.pocketdisplay.app.CursorOverlayView
+        android:id="@+id/cursorOverlay"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
     <!-- Overlay control strip (semi-transparent, top-left) -->
     <LinearLayout
         android:id="@+id/controlPanel"
