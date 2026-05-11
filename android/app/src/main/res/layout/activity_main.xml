@@ -6,7 +6,7 @@
     android:layout_height="match_parent"
     android:background="#000000">
 
-    <!-- Full-screen video surface — TextureView scales content; SurfaceView does not -->
+    <!-- Full-screen video surface -->
     <TextureView
         android:id="@+id/textureView"
         android:layout_width="0dp"
@@ -16,7 +16,7 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- Cursor overlay — sits above video, passes touches through -->
+    <!-- Cursor overlay — passes touches through -->
     <com.pocketdisplay.app.CursorOverlayView
         android:id="@+id/cursorOverlay"
         android:layout_width="0dp"
@@ -26,45 +26,158 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- Overlay control strip (semi-transparent, top-left) -->
+    <!-- HUD panel (tap anywhere to toggle) -->
     <LinearLayout
         android:id="@+id/controlPanel"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:orientation="vertical"
         android:padding="12dp"
-        android:background="#CC000000"
+        android:background="#DD000000"
         android:visibility="visible"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        android:layout_margin="12dp">
+        android:layout_margin="10dp">
 
-        <TextView
-            android:id="@+id/tvDeviceIp"
+        <!-- Device IP + stats row -->
+        <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Device IP: detecting..."
-            android:textColor="#AAFFFFFF"
-            android:textSize="11sp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/tvDeviceIp"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="IP: detecting..."
+                android:textColor="#88FFFFFF"
+                android:textSize="10sp"
+                android:fontFamily="monospace" />
+
+            <TextView
+                android:id="@+id/tvStats"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textColor="#66FFFFFF"
+                android:textSize="10sp"
+                android:fontFamily="monospace"
+                android:layout_marginStart="12dp" />
+        </LinearLayout>
+
+        <!-- Status row -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginTop="4dp">
+
+            <View
+                android:id="@+id/statusDot"
+                android:layout_width="8dp"
+                android:layout_height="8dp"
+                android:background="@drawable/dot_disconnected" />
+
+            <TextView
+                android:id="@+id/tvStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Disconnected"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"
+                android:layout_marginStart="6dp" />
+        </LinearLayout>
+
+        <!-- Mode selector: WiFi / USB -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="8dp"
+            android:background="#33FFFFFF"
+            android:padding="2dp">
+
+            <Button
+                android:id="@+id/btnModeWifi"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:text="WiFi"
+                android:textSize="11sp"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                style="@style/Widget.AppCompat.Button.Borderless" />
+
+            <Button
+                android:id="@+id/btnModeUsb"
+                android:layout_width="wrap_content"
+                android:layout_height="32dp"
+                android:text="USB"
+                android:textSize="11sp"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                style="@style/Widget.AppCompat.Button.Borderless" />
+        </LinearLayout>
+
+        <!-- IP input (WiFi mode only) -->
+        <EditText
+            android:id="@+id/etWindowsIp"
+            android:layout_width="180dp"
+            android:layout_height="36dp"
+            android:hint="Windows IP address"
+            android:textSize="12sp"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#66FFFFFF"
+            android:inputType="textNoSuggestions"
+            android:imeOptions="actionDone"
+            android:background="#44FFFFFF"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:layout_marginTop="6dp"
             android:fontFamily="monospace" />
 
-        <TextView
-            android:id="@+id/tvStatus"
+        <!-- Action buttons -->
+        <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Not connected"
-            android:textColor="#FFFFFF"
-            android:textSize="12sp"
-            android:layout_marginTop="4dp" />
+            android:orientation="horizontal"
+            android:layout_marginTop="8dp">
 
-        <Button
-            android:id="@+id/btnConnect"
-            android:layout_width="wrap_content"
-            android:layout_height="36dp"
-            android:text="Start Listening"
-            android:textSize="12sp"
-            android:layout_marginTop="6dp" />
+            <Button
+                android:id="@+id/btnConnect"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:text="Connect"
+                android:textSize="12sp"
+                android:enabled="false"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp" />
+
+            <Button
+                android:id="@+id/btnKeyboard"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:text="⌨"
+                android:textSize="16sp"
+                android:paddingStart="0dp"
+                android:paddingEnd="0dp"
+                android:layout_marginStart="6dp"
+                android:enabled="false"
+                android:visibility="visible" />
+        </LinearLayout>
 
     </LinearLayout>
+
+    <!-- Hidden 1×1 EditText captures soft keyboard input -->
+    <EditText
+        android:id="@+id/hiddenInput"
+        android:layout_width="1px"
+        android:layout_height="1px"
+        android:alpha="0"
+        android:inputType="textMultiLine|textNoSuggestions"
+        android:imeOptions="flagNoFullscreen|flagNoExtractUi"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

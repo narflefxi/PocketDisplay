@@ -26,4 +26,5 @@ if ($LASTEXITCODE -ne 0) { Write-Error "Build failed"; exit 1 }
 $Exe = "$BuildDir\$Config\PocketDisplay.exe"
 Write-Host ""
 Write-Host "==> Done: $Exe" -ForegroundColor Green
-Write-Host "    Usage: & '$Exe' <android_ip> [port] [bitrate_kbps] [fps]"
+Write-Host "    WiFi: & '$Exe' <android_ip> [--hw]"
+Write-Host "    USB:  & '$Exe' --usb [--hw]   (run usb_connect.bat first)"
