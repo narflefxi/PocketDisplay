@@ -40,6 +40,12 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     @Volatile private var windowsH = 0
     @Volatile private var touchSender: TouchSender? = null
 
+    // Computed in applyFillTransform(); read in onWindowsCursorPos() from any thread.
+    @Volatile private var videoScaledW = 0f
+    @Volatile private var videoScaledH = 0f
+    @Volatile private var videoOffsetX = 0f
+    @Volatile private var videoOffsetY = 0f
+
     private var usbMode = false
 
     // Tap detection
@@ -64,6 +70,17 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     // Keyboard capture
     private var prevInputText = ""
     private var keyboardVisible = false
+
+    private var transformLogged = false
+
+    /** Coalesced UI update: decoder / network callbacks can race with layout & [setDefaultBufferSize]. */
+    private val applyFillTransformRunnable = Runnable { applyFillTransform() }
+
+    private fun scheduleApplyFillTransform() {
+        val tv = binding.textureView
+        tv.removeCallbacks(applyFillTransformRunnable)
+        tv.post(applyFillTransformRunnable)
+    }
 
     // Stats
     private var framesDecoded = 0L
@@ -150,11 +167,12 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         val surface = Surface(st)
         receiver = StreamReceiver(
             surface,
-            onStatus      = ::updateStatus,
-            onDimensions  = ::onVideoDimensions,
-            onSenderIp    = ::onWindowsIpKnown,
-            onWindowsSize = ::onWindowsSizeKnown,
-            onCursorPos   = ::onWindowsCursorPos
+            onStatus          = ::updateStatus,
+            onDimensions      = ::onVideoDimensions,
+            onSenderIp        = ::onWindowsIpKnown,
+            onWindowsSize     = ::onWindowsSizeKnown,
+            onCursorPos       = ::onWindowsCursorPos,
+            onCodecConfigured = ::onCodecConfigured
         )
         receiver?.start(useTcp = usbMode)
 
@@ -166,6 +184,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     }
 
     private fun stopReceiver() {
+        binding.textureView.removeCallbacks(applyFillTransformRunnable)
         receiver?.stop(); receiver = null
         touchSender?.close(); touchSender = null
         videoW = 0; videoH = 0; windowsW = 0; windowsH = 0
@@ -182,7 +201,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     private fun onVideoDimensions(w: Int, h: Int) {
         videoW = w; videoH = h
         binding.textureView.surfaceTexture?.setDefaultBufferSize(w, h)
-        runOnUiThread { applyFillTransform() }
+        scheduleApplyFillTransform()
     }
 
     private fun onWindowsIpKnown(ip: String) {
@@ -198,30 +217,25 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
 
     private fun onWindowsSizeKnown(w: Int, h: Int) {
         windowsW = w; windowsH = h
-        Log.d(TAG, "Windows: ${w}x${h}")
-        runOnUiThread { applyFillTransform() }
+        Log.d(TAG, "Windows size known: ${w}x${h}")
+        transformLogged = false   // force log to re-fire with real content dimensions
+        // Re-apply after video used encoded frame size; defer past layout / surface size churn.
+        scheduleApplyFillTransform()
     }
 
-    private var dbgLastNx = -1f
-    private var dbgLastNy = -1f
-
     private fun onWindowsCursorPos(nx: Float, ny: Float) {
-        val vw = binding.textureView.width.toFloat()
-        val vh = binding.textureView.height.toFloat()
-        // Video is displayed with a horizontal flip (negative X scale in applyFillTransform),
-        // so mirror the cursor X to keep it aligned with the visible content.
-        val sx = (1f - nx) * vw
-        val sy = ny * vh
-
-        // DEBUG: log whenever position jumps by >0.05 in either axis
-        if (Math.abs(nx - dbgLastNx) > 0.05f || Math.abs(ny - dbgLastNy) > 0.05f) {
-            dbgLastNx = nx; dbgLastNy = ny
-            Log.d("CursorDebug",
-                "RECEIVED  nx=%.4f ny=%.4f  |  view=${vw.toInt()}x${vh.toInt()}  |  PLACED  sx=%.1f sy=%.1f"
-                    .format(nx, ny, sx, sy))
-        }
-
+        val scaledW = videoScaledW
+        val scaledH = videoScaledH
+        if (scaledW == 0f || scaledH == 0f) return
+        // Both axes are inverted by the 180° rotation transform.
+        // offsetX/Y accounts for letterbox/pillarbox black bars on any device.
+        val sx = videoOffsetX + (1f - nx) * scaledW
+        val sy = videoOffsetY + (1f - ny) * scaledH
         runOnUiThread { binding.cursorOverlay.moveTo(sx, sy) }
+    }
+
+    private fun onCodecConfigured() {
+        touchSender?.sendAck()
     }
 
     private fun updateStatus(msg: String) {
@@ -242,14 +256,44 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     private fun applyFillTransform() {
         val contentW = if (windowsW > 0) windowsW else videoW
         val contentH = if (windowsH > 0) windowsH else videoH
-        if (contentW == 0 || contentH == 0) return
         val vw = binding.textureView.width.toFloat()
         val vh = binding.textureView.height.toFloat()
+
+        // Log every attempt so we can see which guard fires.
+        if (!transformLogged) {
+            Log.d(TAG, "=== applyFillTransform attempt ===")
+            Log.d(TAG, "  TextureView : ${vw.toInt()} x ${vh.toInt()}")
+            Log.d(TAG, "  Content     : $contentW x $contentH  (windowsW=$windowsW videoW=$videoW)")
+        }
+
+        if (contentW == 0 || contentH == 0) return
         if (vw == 0f || vh == 0f) return
 
-        val fill = maxOf(vw / contentW, vh / contentH)
+        // Fit/contain: scale so the full Windows screen is visible (letterbox/pillarbox).
+        val scale   = minOf(vw / contentW, vh / contentH)
+        val scaledW = contentW * scale
+        val scaledH = contentH * scale
+        val offsetX = (vw - scaledW) / 2f
+        val offsetY = (vh - scaledH) / 2f
+
+        // Persist for cursor mapping (read from background thread).
+        videoScaledW = scaledW
+        videoScaledH = scaledH
+        videoOffsetX = offsetX
+        videoOffsetY = offsetY
+
+        if (!transformLogged) {
+            transformLogged = true
+            Log.d(TAG, "=== applyFillTransform SUCCESS ===")
+            Log.d(TAG, "  scale     : $scale")
+            Log.d(TAG, "  scaledW/H : ${scaledW.toInt()} x ${scaledH.toInt()}")
+            Log.d(TAG, "  offsetX/Y : ${offsetX.toInt()} , ${offsetY.toInt()}")
+        }
+
+        // 180° rotation about the view centre corrects DXGI's coordinate orientation.
+        // setScale with both axes negative is equivalent to a 180° rotation.
         val matrix = Matrix()
-        matrix.setScale(-(fill * contentW / vw), -(fill * contentH / vh), vw / 2f, vh / 2f)
+        matrix.setScale(-(scaledW / vw), -(scaledH / vh), vw / 2f, vh / 2f)
         binding.textureView.setTransform(matrix)
     }
 
@@ -447,11 +491,14 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     // ── TextureView listener ──────────────────────────────────────────────────
 
     override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
-        runOnUiThread { binding.btnConnect.isEnabled = true }
+        runOnUiThread {
+            binding.btnConnect.isEnabled = true
+            scheduleApplyFillTransform()   // retry now that the surface has real dimensions
+        }
     }
 
     override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {
-        runOnUiThread { applyFillTransform() }
+        runOnUiThread { scheduleApplyFillTransform() }
     }
 
     override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
