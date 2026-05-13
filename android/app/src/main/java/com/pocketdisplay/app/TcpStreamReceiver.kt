@@ -79,6 +79,7 @@ class TcpStreamReceiver(
                     input.readFully(payload)
                     val type = payload[0].toInt() and 0xFF
                     val body = if (msgLen > 1) payload.copyOfRange(1, msgLen) else ByteArray(0)
+                    Log.d(TAG, "USB TCP received type=$type payload=${body.size}")
 
                     when (type) {
                         1 -> {

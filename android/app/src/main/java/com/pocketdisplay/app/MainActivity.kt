@@ -286,18 +286,8 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         if (bufW == 0f || bufH == 0f) return
         if (vw == 0f || vh == 0f) return
 
-        // TextureLayer fits the buffer to the view with center-crop by default; without a
-        // proper contain matrix the picture is clipped on the sides (or top/bottom).
-        val viewRect = RectF(0f, 0f, vw, vh)
-        val bufferRect = RectF(0f, 0f, bufW, bufH)
-        val fit = Matrix()
-        fit.setRectToRect(bufferRect, viewRect, Matrix.ScaleToFit.CENTER)
-        // 180° in *view* space after letterboxing: M = flip * fit (not fit * flip).
-        val flip = Matrix()
-        flip.setScale(-1f, -1f, vw / 2f, vh / 2f)
-        val matrix = Matrix()
-        matrix.setConcat(flip, fit)
-        binding.textureView.setTransform(matrix)
+        // DEBUG: identity transform — confirm decoded frames are visible without custom matrix.
+        binding.textureView.setTransform(null)
 
         // Same contain math for cursor overlay (Windows norm → view); use logical desktop
         // size when known so cursor matches GetCursorPos, even if the encoded frame is padded.
