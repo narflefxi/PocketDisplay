@@ -23,19 +23,17 @@ class CursorOverlayView @JvmOverloads constructor(
     attrs: AttributeSet? = null
 ) : View(context, attrs) {
 
-    // Arrow defined in a 26-unit grid; scaled to 24 dp on screen.
-    private val k = 24f * resources.displayMetrics.density / 26f
+    private val s = resources.displayMetrics.density
 
     private val arrowPath = Path().apply {
-        // Hotspot at origin (0,0) = tip of the arrow (top-left corner)
-        moveTo(0f,      0f     )   // tip
-        lineTo(0f,      k*20f  )   // down the left edge
-        lineTo(k*6f,    k*15f  )   // left shoulder of tail
-        lineTo(k*11f,   k*26f  )   // tail tip (extends below body)
-        lineTo(k*14f,   k*23f  )   // right of tail tip
-        lineTo(k*8f,    k*12f  )   // right shoulder of tail
-        lineTo(k*14f,   k*12f  )   // top-right of arrow body
-        close()                    // diagonal back to tip
+        moveTo(  0f * s,   0f * s)   // tip (hotspot)
+        lineTo(  0f * s,  17f * s)   // left edge
+        lineTo(  4f * s,  13f * s)   // notch
+        lineTo(  8f * s,  21f * s)   // tail bottom-left
+        lineTo( 11f * s,  19f * s)   // tail bottom-right
+        lineTo(  7f * s,  11f * s)   // tail top-right
+        lineTo( 12f * s,  11f * s)   // body right
+        close()                       // ~45° diagonal back to tip
     }
 
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -77,7 +75,6 @@ class CursorOverlayView @JvmOverloads constructor(
         if (!cursorVisible) return
         canvas.save()
         canvas.translate(cursorX, cursorY)
-        // Draw outline first so it sits behind the white fill
         canvas.drawPath(arrowPath, outlinePaint)
         canvas.drawPath(arrowPath, fillPaint)
         canvas.restore()

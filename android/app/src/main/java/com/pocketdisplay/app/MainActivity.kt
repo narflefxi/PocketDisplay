@@ -241,13 +241,11 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     }
 
     private fun onWindowsCursorPos(nx: Float, ny: Float) {
-        val scaledW = videoScaledW
-        val scaledH = videoScaledH
-        if (scaledW == 0f || scaledH == 0f) return
-        // Both axes are inverted by the 180° rotation transform.
-        // offsetX/Y accounts for letterbox/pillarbox black bars on any device.
-        val sx = videoOffsetX + (1f - nx) * scaledW
-        val sy = videoOffsetY + (1f - ny) * scaledH
+        val vw = binding.textureView.width.toFloat()
+        val vh = binding.textureView.height.toFloat()
+        if (vw == 0f || vh == 0f) return
+        val sx = nx * vw
+        val sy = ny * vh
         runOnUiThread { binding.cursorOverlay.moveTo(sx, sy) }
     }
 
@@ -286,8 +284,8 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         if (bufW == 0f || bufH == 0f) return
         if (vw == 0f || vh == 0f) return
 
-        // DEBUG: identity transform — confirm decoded frames are visible without custom matrix.
         binding.textureView.setTransform(null)
+        binding.textureView.rotation = 180f
 
         // Same contain math for cursor overlay (Windows norm → view); use logical desktop
         // size when known so cursor matches GetCursorPos, even if the encoded frame is padded.
@@ -492,13 +490,15 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         val vw = binding.textureView.width.toFloat()
         val vh = binding.textureView.height.toFloat()
         if (vw == 0f || vh == 0f) return Pair(0f, 0f)
-        return Pair((tx / vw).coerceIn(0f, 1f), (ty / vh).coerceIn(0f, 1f))
+        // TextureView is rotated 180°; invert both axes so Windows coords are correct.
+        return Pair((1f - tx / vw).coerceIn(0f, 1f), (1f - ty / vh).coerceIn(0f, 1f))
     }
 
     private fun toScreenPosition(nx: Float, ny: Float): Pair<Float, Float> {
         val vw = binding.textureView.width.toFloat()
         val vh = binding.textureView.height.toFloat()
-        return Pair(nx * vw, ny * vh)
+        // Inverse of toNormalized: map Windows-normalized coords back to physical screen pixels.
+        return Pair((1f - nx) * vw, (1f - ny) * vh)
     }
 
     private fun moveCursorTo(p: Pair<Float, Float>) =
