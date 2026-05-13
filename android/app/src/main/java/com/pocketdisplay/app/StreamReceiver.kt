@@ -1,14 +1,13 @@
 package com.pocketdisplay.app
 
 import android.view.Surface
-import java.io.InputStream
 import java.net.DatagramPacket
 import java.net.DatagramSocket
-import java.net.ServerSocket
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.concurrent.thread
 
+/** WiFi: UDP listener on [PORT] for PDSM-framed packets. USB uses [TcpStreamReceiver]. */
 class StreamReceiver(
     surface: Surface,
     private val onStatus: (String) -> Unit,
@@ -33,7 +32,6 @@ class StreamReceiver(
 
     @Volatile var isRunning = false
     private var udpSocket: DatagramSocket? = null
-    private var tcpServer: ServerSocket? = null
     private val decoder = VideoDecoder(surface, onStatus, onDimensions, onCodecConfigured)
 
     private val frameBuffer = LinkedHashMap<Int, FrameAssembly>()
@@ -47,12 +45,8 @@ class StreamReceiver(
         var received: Int = 0
     )
 
-    fun start(useTcp: Boolean = false) {
+    fun start() {
         isRunning = true
-        if (useTcp) startTcp() else startUdp()
-    }
-
-    private fun startUdp() {
         thread(name = "StreamReceiver-UDP", isDaemon = true) {
             try {
                 val sock = DatagramSocket(PORT)
@@ -75,51 +69,6 @@ class StreamReceiver(
             } catch (e: Exception) {
                 if (isRunning) onStatus("UDP error: ${e.message}")
             }
-        }
-    }
-
-    private fun startTcp() {
-        thread(name = "StreamReceiver-TCP", isDaemon = true) {
-            try {
-                val server = ServerSocket(PORT)
-                tcpServer = server
-                onStatus("Waiting for Windows (USB) on :$PORT…")
-
-                while (isRunning) {
-                    val client = server.accept()
-                    client.receiveBufferSize = 4 * 1024 * 1024
-                    // In USB mode the sender is always localhost (ADB forward)
-                    onSenderIp?.invoke("127.0.0.1")
-                    onStatus("Windows connected via USB")
-                    readTcpStream(client.getInputStream())
-                    client.close()
-                    if (isRunning) onStatus("Windows disconnected — waiting…")
-                }
-            } catch (e: Exception) {
-                if (isRunning) onStatus("TCP error: ${e.message}")
-            }
-        }
-    }
-
-    private fun readFully(stream: InputStream, buf: ByteArray, len: Int): Boolean {
-        var read = 0
-        while (read < len) {
-            val n = stream.read(buf, read, len - read)
-            if (n < 0) return false
-            read += n
-        }
-        return true
-    }
-
-    private fun readTcpStream(stream: InputStream) {
-        val lenBuf = ByteArray(4)
-        val pktBuf = ByteArray(MAX_PACKET_SIZE + 64)
-        while (isRunning) {
-            if (!readFully(stream, lenBuf, 4)) return
-            val pktLen = ByteBuffer.wrap(lenBuf).order(ByteOrder.BIG_ENDIAN).int
-            if (pktLen <= 0 || pktLen > pktBuf.size) return
-            if (!readFully(stream, pktBuf, pktLen)) return
-            processPacket(pktBuf, pktLen)
         }
     }
 
@@ -193,7 +142,6 @@ class StreamReceiver(
     fun stop() {
         isRunning = false
         udpSocket?.close(); udpSocket = null
-        tcpServer?.close(); tcpServer = null
         decoder.release()
         frameBuffer.clear()
     }

@@ -2,7 +2,8 @@
 #include "Encoder.h"
 #include "HwEncoder.h"
 #include "UdpStreamer.h"
-#include "TcpStreamer.h"
+#include "TcpVideoServer.h"
+#include "AdbUsbSetup.h"
 #include "TouchReceiver.h"
 #include "Protocol.h"
 
@@ -47,7 +48,7 @@ static void PrintUsage(const char* exe) {
     std::cout << "  USB:  " << exe << " --usb [--hw]\n";
     ResetColor();
     std::cout << "\nOptions:\n"
-              << "  --usb    USB mode via ADB (run usb_connect.bat first)\n"
+              << "  --usb    USB mode: adb reverse + TCP video server (device connects to PC)\n"
               << "  --hw     Hardware encoder (NVENC/Intel/AMD — falls back to x264)\n"
               << "\nExamples:\n"
               << "  " << exe << " 192.168.1.100\n"
@@ -116,10 +117,13 @@ struct UdpStreamerWrap : IStreamer {
     void Close() override { s.Close(); }
 };
 
-struct TcpStreamerWrap : IStreamer {
-    TcpStreamer s;
-    bool Initialize(const std::string& ip, uint16_t port) override { return s.Initialize(ip,port); }
-    bool SendFrame(const uint8_t* d, size_t sz, uint32_t id, uint8_t f) override { return s.SendFrame(d,sz,id,f); }
+// USB: PC listens; Android connects via adb reverse. Length-prefixed messages (see TcpVideoServer).
+struct TcpVideoServerWrap : IStreamer {
+    TcpVideoServer s;
+    bool Initialize(const std::string& /*ip*/, uint16_t port) override { return s.StartListen(port); }
+    bool SendFrame(const uint8_t* d, size_t sz, uint32_t id, uint8_t f) override {
+        return s.SendFrame(d, sz, id, f);
+    }
     void Close() override { s.Close(); }
 };
 
@@ -224,26 +228,29 @@ int main(int argc, char* argv[]) {
               << target_ip << ":" << port << "\n";
     ResetColor();
 
-    if (usb_mode) {
-        SetColor(YELLOW);
-        std::cout << "      ADB setup required:\n"
-                  << "        adb forward tcp:" << port << " tcp:" << port << "\n"
-                  << "        adb reverse tcp:" << touch_port << " tcp:" << touch_port << "\n"
-                  << "      Or run: windows\\usb_connect.bat\n";
-        ResetColor();
-    }
-
     std::unique_ptr<IStreamer> streamer;
     if (usb_mode) {
-        auto tcp = std::make_unique<TcpStreamerWrap>();
-        std::cout << "      Waiting for Android TCP connection on port " << port << "...\n";
-        if (!tcp->Initialize(target_ip, port)) {
+        SetColor(CYAN);
+        std::cout << "      USB: configuring adb reverse (tcp:" << port << ", tcp:" << touch_port << ")...\n";
+        ResetColor();
+        if (const std::string adb_err = RunAdbUsbReverse(port, touch_port); !adb_err.empty()) {
             SetColor(RED);
-            std::cerr << "  ERROR: TCP connect failed. Is ADB forwarding set up and Android app listening?\n";
+            std::cerr << "  ERROR: " << adb_err << "\n";
             ResetColor();
             return 1;
         }
-        streamer = std::move(tcp);
+        SetColor(GREEN);
+        std::cout << "      USB: adb reverse OK.\n";
+        ResetColor();
+
+        auto srv = std::make_unique<TcpVideoServerWrap>();
+        if (!srv->Initialize("", port)) {
+            SetColor(RED);
+            std::cerr << "  ERROR: USB TCP video listen failed on port " << port << ".\n";
+            ResetColor();
+            return 1;
+        }
+        streamer = std::move(srv);
     } else {
         auto udp = std::make_unique<UdpStreamerWrap>();
         if (!udp->Initialize(target_ip, port)) {
@@ -255,7 +262,11 @@ int main(int argc, char* argv[]) {
         streamer = std::move(udp);
     }
     SetColor(GREEN);
-    std::cout << "      Connected.\n";
+    if (usb_mode)
+        std::cout << "      USB: TCP video server ready on :" << port
+                  << " — start Android app (USB) to connect.\n";
+    else
+        std::cout << "      UDP sender ready.\n";
     ResetColor();
 
     // ── Touch receiver ───────────────────────────────────────────────────────

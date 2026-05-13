@@ -34,6 +34,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
 
     private lateinit var binding: ActivityMainBinding
     private var receiver: StreamReceiver? = null
+    private var tcpReceiver: TcpStreamReceiver? = null
 
     @Volatile private var videoW = 0
     @Volatile private var videoH = 0
@@ -88,7 +89,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     private var statsHandler  = Handler(Looper.getMainLooper())
     private val statsRunnable = object : Runnable {
         override fun run() {
-            if (receiver?.isRunning == true) {
+            if (receiver?.isRunning == true || tcpReceiver?.isRunning == true) {
                 binding.tvStats.text = "↓ ${framesDecoded / 5} fps"
                 framesDecoded = 0
             }
@@ -150,7 +151,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     // ── Streaming control ────────────────────────────────────────────────────
 
     private fun toggleReceiver() {
-        if (receiver?.isRunning == true) stopReceiver() else startReceiver()
+        if (receiver?.isRunning == true || tcpReceiver?.isRunning == true) stopReceiver() else startReceiver()
     }
 
     private fun startReceiver() {
@@ -166,27 +167,42 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         }
 
         val surface = Surface(st)
-        receiver = StreamReceiver(
-            surface,
-            onStatus          = ::updateStatus,
-            onDimensions      = ::onVideoDimensions,
-            onSenderIp        = ::onWindowsIpKnown,
-            onWindowsSize     = ::onWindowsSizeKnown,
-            onCursorPos       = ::onWindowsCursorPos,
-            onCodecConfigured = ::onCodecConfigured
-        )
-        receiver?.start(useTcp = usbMode)
+        if (usbMode) {
+            tcpReceiver = TcpStreamReceiver(
+                surface,
+                port              = StreamReceiver.PORT,
+                onStatus          = ::updateStatus,
+                onDimensions      = ::onVideoDimensions,
+                onSenderIp        = ::onWindowsIpKnown,
+                onWindowsSize     = ::onWindowsSizeKnown,
+                onCursorPos       = ::onWindowsCursorPos,
+                onCodecConfigured = ::onCodecConfigured
+            )
+            tcpReceiver?.start()
+        } else {
+            receiver = StreamReceiver(
+                surface,
+                onStatus          = ::updateStatus,
+                onDimensions      = ::onVideoDimensions,
+                onSenderIp        = ::onWindowsIpKnown,
+                onWindowsSize     = ::onWindowsSizeKnown,
+                onCursorPos       = ::onWindowsCursorPos,
+                onCodecConfigured = ::onCodecConfigured
+            )
+            receiver?.start()
+        }
 
         binding.btnConnect.text = "Disconnect"
         binding.btnKeyboard.isEnabled = true
         setStatusDot(connected = false)
-        updateStatus(if (usbMode) "Waiting for Windows (USB)…"
+        updateStatus(if (usbMode) "USB: connecting to 127.0.0.1… (run PocketDisplay.exe --usb on PC)"
                      else "Waiting for stream on :${StreamReceiver.PORT}…")
     }
 
     private fun stopReceiver() {
         binding.textureView.removeCallbacks(applyFillTransformRunnable)
         receiver?.stop(); receiver = null
+        tcpReceiver?.stop(); tcpReceiver = null
         touchSender?.close(); touchSender = null
         videoW = 0; videoH = 0; windowsW = 0; windowsH = 0
         binding.cursorOverlay.hide()
@@ -208,7 +224,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     private fun onWindowsIpKnown(ip: String) {
         if (touchSender == null) {
             val senderIp = if (usbMode) "127.0.0.1" else ip
-            touchSender = TouchSender(senderIp, useTcp = usbMode)
+            touchSender = if (usbMode) TcpTouchSender(senderIp) else TouchSender(senderIp, useTcp = false)
             runOnUiThread {
                 setStatusDot(connected = true)
                 updateStatus(if (usbMode) "Streaming via USB" else "Streaming via WiFi ↔ $ip")

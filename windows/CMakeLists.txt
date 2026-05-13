@@ -14,6 +14,8 @@ add_executable(PocketDisplay
     src/HwEncoder.cpp
     src/UdpStreamer.cpp
     src/TcpStreamer.cpp
+    src/TcpVideoServer.cpp
+    src/AdbUsbSetup.cpp
     src/TouchReceiver.cpp
 )
 
@@ -25,6 +27,7 @@ target_link_libraries(PocketDisplay PRIVATE
     dxgi
     dxguid
     ws2_32
+    shell32
     mf
     mfplat
     mfuuid

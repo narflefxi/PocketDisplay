@@ -1,5 +1,6 @@
 package com.pocketdisplay.app
 
+import android.util.Log
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -23,7 +24,7 @@ import java.util.concurrent.Executors
  *   [8-11] payload: float nx / uint32 unicode codepoint / uint16 VK code
  *   [12-15] payload: float ny / padding
  */
-class TouchSender(
+open class TouchSender(
     targetIp: String,
     private val port: Int = 7778,
     private val useTcp: Boolean = false
@@ -62,7 +63,7 @@ class TouchSender(
             // Windows starts listening on :7778 only after the stream TCP socket is accepted.
             // Without retries the first connect often races and fails silently (no ACK / touch).
             executor.submit {
-                val addr = InetSocketAddress(InetAddress.getByName("127.0.0.1"), port)
+                val addr = InetSocketAddress(InetAddress.getByName(targetIp), port)
                 var attempts = 0
                 while (attempts < 80) {
                     attempts++
@@ -72,6 +73,7 @@ class TouchSender(
                         s.tcpNoDelay = true
                         s.connect(addr, 600)
                         tcpSocket = s
+                        Log.i("PocketDisplay", "Touch TCP connected to $targetIp:$port")
                         break
                     } catch (_: Exception) {
                         try { s?.close() } catch (_: Exception) {}
