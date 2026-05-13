@@ -1,6 +1,7 @@
 package com.pocketdisplay.app
 
 import android.graphics.Matrix
+import android.graphics.RectF
 import android.graphics.SurfaceTexture
 import android.os.Bundle
 import android.os.Handler
@@ -254,8 +255,8 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     // ── Video transform ──────────────────────────────────────────────────────
 
     private fun applyFillTransform() {
-        val contentW = if (windowsW > 0) windowsW else videoW
-        val contentH = if (windowsH > 0) windowsH else videoH
+        val bufW = videoW.toFloat()
+        val bufH = videoH.toFloat()
         val vw = binding.textureView.width.toFloat()
         val vh = binding.textureView.height.toFloat()
 
@@ -263,20 +264,35 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         if (!transformLogged) {
             Log.d(TAG, "=== applyFillTransform attempt ===")
             Log.d(TAG, "  TextureView : ${vw.toInt()} x ${vh.toInt()}")
-            Log.d(TAG, "  Content     : $contentW x $contentH  (windowsW=$windowsW videoW=$videoW)")
+            Log.d(TAG, "  Buffer      : ${bufW.toInt()} x ${bufH.toInt()}  windows=${windowsW}x${windowsH}")
         }
 
-        if (contentW == 0 || contentH == 0) return
+        if (bufW == 0f || bufH == 0f) return
         if (vw == 0f || vh == 0f) return
 
-        // Fit/contain: scale so the full Windows screen is visible (letterbox/pillarbox).
-        val scale   = minOf(vw / contentW, vh / contentH)
+        // TextureLayer fits the buffer to the view with center-crop by default; without a
+        // proper contain matrix the picture is clipped on the sides (or top/bottom).
+        val viewRect = RectF(0f, 0f, vw, vh)
+        val bufferRect = RectF(0f, 0f, bufW, bufH)
+        val fit = Matrix()
+        fit.setRectToRect(bufferRect, viewRect, Matrix.ScaleToFit.CENTER)
+        // 180° in *view* space after letterboxing: M = flip * fit (not fit * flip).
+        val flip = Matrix()
+        flip.setScale(-1f, -1f, vw / 2f, vh / 2f)
+        val matrix = Matrix()
+        matrix.setConcat(flip, fit)
+        binding.textureView.setTransform(matrix)
+
+        // Same contain math for cursor overlay (Windows norm → view); use logical desktop
+        // size when known so cursor matches GetCursorPos, even if the encoded frame is padded.
+        val contentW = if (windowsW > 0) windowsW.toFloat() else bufW
+        val contentH = if (windowsH > 0) windowsH.toFloat() else bufH
+        val scale = minOf(vw / contentW, vh / contentH)
         val scaledW = contentW * scale
         val scaledH = contentH * scale
         val offsetX = (vw - scaledW) / 2f
         val offsetY = (vh - scaledH) / 2f
 
-        // Persist for cursor mapping (read from background thread).
         videoScaledW = scaledW
         videoScaledH = scaledH
         videoOffsetX = offsetX
@@ -289,12 +305,6 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
             Log.d(TAG, "  scaledW/H : ${scaledW.toInt()} x ${scaledH.toInt()}")
             Log.d(TAG, "  offsetX/Y : ${offsetX.toInt()} , ${offsetY.toInt()}")
         }
-
-        // 180° rotation about the view centre corrects DXGI's coordinate orientation.
-        // setScale with both axes negative is equivalent to a 180° rotation.
-        val matrix = Matrix()
-        matrix.setScale(-(scaledW / vw), -(scaledH / vh), vw / 2f, vh / 2f)
-        binding.textureView.setTransform(matrix)
     }
 
     // ── Touch handling ───────────────────────────────────────────────────────

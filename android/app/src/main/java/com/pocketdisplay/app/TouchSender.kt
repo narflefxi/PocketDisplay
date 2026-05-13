@@ -3,6 +3,7 @@ package com.pocketdisplay.app
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -58,11 +59,25 @@ class TouchSender(
 
     init {
         if (useTcp) {
+            // Windows starts listening on :7778 only after the stream TCP socket is accepted.
+            // Without retries the first connect often races and fails silently (no ACK / touch).
             executor.submit {
-                try {
-                    tcpSocket = Socket("127.0.0.1", port)
-                    tcpSocket?.tcpNoDelay = true
-                } catch (_: Exception) {}
+                val addr = InetSocketAddress(InetAddress.getByName("127.0.0.1"), port)
+                var attempts = 0
+                while (attempts < 80) {
+                    attempts++
+                    var s: Socket? = null
+                    try {
+                        s = Socket()
+                        s.tcpNoDelay = true
+                        s.connect(addr, 600)
+                        tcpSocket = s
+                        break
+                    } catch (_: Exception) {
+                        try { s?.close() } catch (_: Exception) {}
+                        Thread.sleep(200)
+                    }
+                }
             }
         }
     }
@@ -98,6 +113,19 @@ class TouchSender(
             buf.put(0); buf.put(0); buf.put(0)    // reserved
             buf.putInt(cp)                        // bytes [8-11]: codepoint
             buf.putInt(0)                         // bytes [12-15]: padding
+            rawSend(buf.array())
+        }
+    }
+
+    /** Notify Windows that Android's codec is ready (type 8). */
+    fun sendAck() {
+        executor.submit {
+            val buf = ByteBuffer.allocate(16).order(ByteOrder.BIG_ENDIAN)
+            buf.put('P'.code.toByte()).put('D'.code.toByte())
+               .put('T'.code.toByte()).put('I'.code.toByte())
+            buf.put(8.toByte())                   // CODEC_READY_ACK
+            buf.put(0); buf.put(0); buf.put(0)    // reserved
+            buf.putLong(0)                        // bytes [8-15]: padding
             rawSend(buf.array())
         }
     }

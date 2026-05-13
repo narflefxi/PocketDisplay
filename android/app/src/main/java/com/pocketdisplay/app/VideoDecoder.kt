@@ -9,12 +9,16 @@ import java.nio.ByteBuffer
 class VideoDecoder(
     private val surface: Surface,
     private val onStatus: (String) -> Unit,
-    private val onDimensions: ((width: Int, height: Int) -> Unit)? = null
+    private val onDimensions: ((width: Int, height: Int) -> Unit)? = null,
+    private val onConfigured: (() -> Unit)? = null
 ) {
     private var codec: MediaCodec? = null
     @Volatile private var running = false
+    private var lastSpsData: ByteArray? = null
 
     fun configure(spsData: ByteArray) {
+        if (lastSpsData != null && spsData.contentEquals(lastSpsData!!)) return
+        lastSpsData = spsData.copyOf()
         release()
         try {
             val (sps, pps) = parseSpsAndPps(spsData)
@@ -39,6 +43,7 @@ class VideoDecoder(
             running = true
             startOutputDrain()
             onStatus("Decoder ready")
+            onConfigured?.invoke()
         } catch (e: Exception) {
             onStatus("Decoder error: ${e.message}")
         }
@@ -120,6 +125,7 @@ class VideoDecoder(
 
     fun release() {
         running = false
+        lastSpsData = null
         try { codec?.stop() } catch (_: Exception) {}
         try { codec?.release() } catch (_: Exception) {}
         codec = null

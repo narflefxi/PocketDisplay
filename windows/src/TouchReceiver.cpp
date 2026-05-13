@@ -102,6 +102,9 @@ void TouchReceiver::ProcessPacket(const uint8_t* buf, int len) {
         InjectUnicodeChar(be_u32(pkt->payload));
     } else if (type == 6 || type == 7) {
         InjectVirtualKey(be_u16(pkt->payload), type == 6);
+    } else if (type == 8) {
+        // Codec-ready ACK from Android
+        if (ack_cb_) ack_cb_();
     }
 }
 

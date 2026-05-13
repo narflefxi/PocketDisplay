@@ -2,6 +2,7 @@
 #include <winsock2.h>
 #include <cstdint>
 #include <atomic>
+#include <functional>
 #include <thread>
 
 // Receives touch and keyboard events from the Android app.
@@ -17,6 +18,9 @@ public:
     bool Start(uint16_t port = 7778, bool tcp_mode = false);
     void Stop();
 
+    // Called once when Android sends a codec-ready ACK (touch packet type 8).
+    void SetAckCallback(std::function<void()> cb) { ack_cb_ = std::move(cb); }
+
 private:
     void UdpLoop();
     void TcpAcceptLoop();
@@ -26,6 +30,7 @@ private:
     void InjectUnicodeChar(uint32_t codepoint) const;
     void InjectVirtualKey(uint16_t vk, bool key_down) const;
 
+    std::function<void()> ack_cb_;
     SOCKET            sock_     = INVALID_SOCKET;
     std::thread       thread_;
     std::atomic<bool> running_{false};

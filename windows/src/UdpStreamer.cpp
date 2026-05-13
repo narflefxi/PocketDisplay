@@ -34,7 +34,7 @@ bool UdpStreamer::SendFrame(const uint8_t* data, size_t size,
     const size_t total_pkts = (size + MAX_PACKET_PAYLOAD - 1) / MAX_PACKET_PAYLOAD;
     if (total_pkts > 0xFFFF) return false;  // frame too large
 
-    static uint8_t pkt_buf[sizeof(PacketHeader) + MAX_PACKET_PAYLOAD];
+    uint8_t pkt_buf[sizeof(PacketHeader) + MAX_PACKET_PAYLOAD];
 
     for (size_t i = 0; i < total_pkts; ++i) {
         const size_t offset      = i * MAX_PACKET_PAYLOAD;

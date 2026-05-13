@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(winget *)",
+      "PowerShell(git clone *)",
+      "PowerShell(C:\\\\vcpkg\\\\bootstrap-vcpkg.bat -disableMetrics 2>&1)",
+      "PowerShell(C:\\\\vcpkg\\\\vcpkg.exe install x264:x64-windows 2>&1)",
+      "PowerShell(Get-ChildItem \"C:\\\\Projects\\\\PocketDisplay\" -Recurse -File | ForEach-Object { $_.FullName.Replace\\(\"C:\\\\Projects\\\\PocketDisplay\\\\\", \"\"\\) } | Sort-Object)",
+      "PowerShell(C:\\\\vcpkg\\\\vcpkg.exe list 2>&1)",
+      "PowerShell(Head-Object *)",
+      "PowerShell(cmd /c \"dir C:\\\\vcpkg\\\\installed\\\\x64-windows /s /b 2>&1\" | Select-Object -First 40)",
+      "PowerShell(cmd /c \"dir \"\"C:\\\\Program Files\\\\Android\\\\Android Studio\"\" /b 2>&1\")",
+      "PowerShell(cmd /c \"dir \"\"C:\\\\Program Files\\\\Android\\\\Android Studio\\\\plugins\\\\gradle\"\" /b /s 2>&1\" | Select-Object -First 20)",
+      "PowerShell(git *)",
+      "PowerShell(& \"$env:LOCALAPPDATA\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" install -r \"C:\\\\Projects\\\\PocketDisplay\\\\android\\\\app\\\\build\\\\outputs\\\\apk\\\\debug\\\\app-debug.apk\")",
+      "PowerShell(cmake *)",
+      "PowerShell(& \"C:\\\\Program Files\\\\CMake\\\\bin\\\\cmake.exe\" --build C:\\\\Projects\\\\PocketDisplay\\\\windows\\\\build --config Release 2>&1 | Select-Object -Last 25)",
+      "PowerShell(C:\\\\Projects\\\\PocketDisplay\\\\android\\\\gradlew.bat --project-dir C:\\\\Projects\\\\PocketDisplay\\\\android assembleDebug 2>&1 | Select-Object -Last 15)",
+      "PowerShell($env:JAVA_HOME = \"C:\\\\Program Files\\\\Android\\\\Android Studio\\\\jbr\"; C:\\\\Projects\\\\PocketDisplay\\\\android\\\\gradlew.bat --project-dir C:\\\\Projects\\\\PocketDisplay\\\\android assembleDebug 2>&1 | Select-Object -Last 15)",
+      "PowerShell(adb install *)",
+      "PowerShell(& \"$env:USERPROFILE\\\\AppData\\\\Local\\\\Android\\\\Sdk\\\\platform-tools\\\\adb.exe\" install -r C:\\\\Projects\\\\PocketDisplay\\\\android\\\\app\\\\build\\\\outputs\\\\apk\\\\debug\\\\app-debug.apk)",
+      "PowerShell($env:JAVA_HOME = \"C:\\\\Program Files\\\\Android\\\\Android Studio\\\\jbr\"; C:\\\\Projects\\\\PocketDisplay\\\\android\\\\gradlew.bat --project-dir C:\\\\Projects\\\\PocketDisplay\\\\android assembleDebug 2>&1 | Select-Object -Last 8)",
+      "PowerShell(& \"C:\\\\Program Files\\\\CMake\\\\bin\\\\cmake.exe\" --build C:\\\\Projects\\\\PocketDisplay\\\\windows\\\\build --config Release 2>&1 | Select-Object -Last 6)",
+      "PowerShell($env:JAVA_HOME = \"C:\\\\Program Files\\\\Android\\\\Android Studio\\\\jbr\"; C:\\\\Projects\\\\PocketDisplay\\\\android\\\\gradlew.bat --project-dir C:\\\\Projects\\\\PocketDisplay\\\\android assembleDebug 2>&1 | Select-Object -Last 6)",
+      "PowerShell($env:JAVA_HOME = \"C:\\\\Program Files\\\\Android\\\\Android Studio\\\\jbr\"; C:\\\\Projects\\\\PocketDisplay\\\\android\\\\gradlew.bat --project-dir C:\\\\Projects\\\\PocketDisplay\\\\android assembleDebug 2>&1 | Select-Object -Last 5)",
+      "PowerShell(& \"C:\\\\Program Files\\\\CMake\\\\bin\\\\cmake.exe\" --build C:\\\\Projects\\\\PocketDisplay\\\\windows\\\\build --config Release 2>&1 | Select-Object -Last 5)",
+      "PowerShell(Stop-Process *)"
+    ]
+  }
+}

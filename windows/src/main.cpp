@@ -276,49 +276,56 @@ int main(int argc, char* argv[]) {
         ResetColor();
     }
 
-    // ── Initial codec config packet ─────────────────────────────────────────
+    // ── Codec config resend thread ────────────────────────────────────────────
+    // Resends FLAG_STREAM_INFO + FLAG_CODEC_CONFIG every 1.5 s until Android
+    // acknowledges via a codec-ready ACK packet on the touch channel.
+    // This fixes the connection-order bug: Android can start any time.
 
-    {
-        uint8_t dims[8];
-        uint32_t sw = htonl(static_cast<uint32_t>(capture.GetWidth()));
-        uint32_t sh = htonl(static_cast<uint32_t>(capture.GetHeight()));
-        std::memcpy(dims,     &sw, 4);
-        std::memcpy(dims + 4, &sh, 4);
-        streamer->SendFrame(dims, 8, 0, pocketdisplay::FLAG_STREAM_INFO);
-    }
+    std::atomic<bool> android_ready{false};
+    touch.SetAckCallback([&]() {
+        android_ready = true;
+        SetColor(GREEN);
+        std::cout << "\n  Android ready — codec confirmed.\n";
+        ResetColor();
+    });
 
-    {
-        std::vector<uint8_t> sps_pps;
-        if (encoder->GetConfigPacket(sps_pps)) {
-            streamer->SendFrame(sps_pps.data(), sps_pps.size(),
-                                0, pocketdisplay::FLAG_CODEC_CONFIG);
-            std::cout << "  Sent codec config (" << sps_pps.size() << " bytes)\n";
+    const int cap_w = capture.GetWidth();
+    const int cap_h = capture.GetHeight();
+
+    std::thread resend_thread([&]() {
+        while (g_running) {
+            // Stream dimensions
+            uint8_t dims[8];
+            uint32_t sw = htonl(static_cast<uint32_t>(cap_w));
+            uint32_t sh = htonl(static_cast<uint32_t>(cap_h));
+            std::memcpy(dims,     &sw, 4);
+            std::memcpy(dims + 4, &sh, 4);
+            streamer->SendFrame(dims, 8, 0, pocketdisplay::FLAG_STREAM_INFO);
+
+            // Codec config — resent every 2 s so Android can connect at any time.
+            // Android deduplicates identical SPS/PPS and skips decoder restart.
+            std::vector<uint8_t> sps_pps;
+            if (encoder->GetConfigPacket(sps_pps) && !sps_pps.empty()) {
+                streamer->SendFrame(sps_pps.data(), sps_pps.size(),
+                                    0, pocketdisplay::FLAG_CODEC_CONFIG);
+            }
+
+            // Sleep 2 s in short intervals so shutdown is responsive
+            for (int i = 0; i < 20 && g_running; ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
-    }
+    });
 
     // ── Cursor position thread (60 Hz) ───────────────────────────────────────
 
     const int screen_w = GetSystemMetrics(SM_CXSCREEN);
     const int screen_h = GetSystemMetrics(SM_CYSCREEN);
     std::thread cursor_thread([&]() {
-        int log_tick = 0;
         while (g_running) {
             POINT pos = {};
             if (GetCursorPos(&pos)) {
                 float nx = static_cast<float>(pos.x) / screen_w;
                 float ny = static_cast<float>(pos.y) / screen_h;
-
-                // DEBUG: print once per second (~60 ticks × 16 ms)
-                if (++log_tick >= 60) {
-                    log_tick = 0;
-                    std::cout << "\n[CURSOR SENT]"
-                              << "  px=" << pos.x << "/" << screen_w
-                              << "  py=" << pos.y << "/" << screen_h
-                              << "  nx=" << std::fixed << std::setprecision(4) << nx
-                              << "  ny=" << ny << "\n";
-                    std::cout.flush();
-                }
-
                 uint32_t nx_be, ny_be;
                 std::memcpy(&nx_be, &nx, 4); nx_be = htonl(nx_be);
                 std::memcpy(&ny_be, &ny, 4); ny_be = htonl(ny_be);
@@ -341,7 +348,6 @@ int main(int argc, char* argv[]) {
     uint32_t frame_id    = 1;
     uint64_t frames_sent = 0;
     size_t   bytes_sent  = 0;
-    bool     codec_config_sent = hw_enc ? false : true;  // HW: send after first keyframe
 
     const auto frame_interval = std::chrono::microseconds(1'000'000 / target_fps);
     auto       next_frame     = std::chrono::steady_clock::now();
@@ -359,16 +365,6 @@ int main(int argc, char* argv[]) {
         bool is_keyframe = false;
         if (!encoder->EncodeFrame(bgra_buf.data(), nal_buf, is_keyframe)) continue;
         if (nal_buf.empty()) continue;
-
-        // For HW encoder: send codec config packet on first keyframe
-        if (!codec_config_sent && is_keyframe) {
-            std::vector<uint8_t> sps_pps;
-            if (encoder->GetConfigPacket(sps_pps) && !sps_pps.empty()) {
-                streamer->SendFrame(sps_pps.data(), sps_pps.size(),
-                                    0, pocketdisplay::FLAG_CODEC_CONFIG);
-                codec_config_sent = true;
-            }
-        }
 
         const uint8_t flags = is_keyframe ? pocketdisplay::FLAG_KEYFRAME : pocketdisplay::FLAG_NONE;
         streamer->SendFrame(nal_buf.data(), nal_buf.size(), frame_id++, flags);
@@ -388,6 +384,7 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "\n\n  Shutting down...\n";
+    if (resend_thread.joinable()) resend_thread.join();
     if (cursor_thread.joinable()) cursor_thread.join();
     encoder->Close();
     streamer->Close();
