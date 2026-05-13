@@ -304,21 +304,27 @@ int main(int argc, char* argv[]) {
     const int cap_h = capture.GetHeight();
 
     std::thread resend_thread([&]() {
+        bool dims_sent = false;
         while (g_running) {
-            // Stream dimensions
-            uint8_t dims[8];
-            uint32_t sw = htonl(static_cast<uint32_t>(cap_w));
-            uint32_t sh = htonl(static_cast<uint32_t>(cap_h));
-            std::memcpy(dims,     &sw, 4);
-            std::memcpy(dims + 4, &sh, 4);
-            streamer->SendFrame(dims, 8, 0, pocketdisplay::FLAG_STREAM_INFO);
+            // Stream dimensions — static for session lifetime; send only once.
+            if (!dims_sent) {
+                uint8_t dims[8];
+                uint32_t sw = htonl(static_cast<uint32_t>(cap_w));
+                uint32_t sh = htonl(static_cast<uint32_t>(cap_h));
+                std::memcpy(dims,     &sw, 4);
+                std::memcpy(dims + 4, &sh, 4);
+                streamer->SendFrame(dims, 8, 0, pocketdisplay::FLAG_STREAM_INFO);
+                dims_sent = true;
+            }
 
-            // Codec config — resent every 2 s so Android can connect at any time.
-            // Android deduplicates identical SPS/PPS and skips decoder restart.
-            std::vector<uint8_t> sps_pps;
-            if (encoder->GetConfigPacket(sps_pps) && !sps_pps.empty()) {
-                streamer->SendFrame(sps_pps.data(), sps_pps.size(),
-                                    0, pocketdisplay::FLAG_CODEC_CONFIG);
+            // Codec config — resent every 2 s until Android acknowledges.
+            // Stops once android_ready is set to avoid repeated MediaCodec reinitialisation.
+            if (!android_ready) {
+                std::vector<uint8_t> sps_pps;
+                if (encoder->GetConfigPacket(sps_pps) && !sps_pps.empty()) {
+                    streamer->SendFrame(sps_pps.data(), sps_pps.size(),
+                                        0, pocketdisplay::FLAG_CODEC_CONFIG);
+                }
             }
 
             // Sleep 2 s in short intervals so shutdown is responsive
@@ -332,9 +338,11 @@ int main(int argc, char* argv[]) {
     const int screen_w = GetSystemMetrics(SM_CXSCREEN);
     const int screen_h = GetSystemMetrics(SM_CYSCREEN);
     std::thread cursor_thread([&]() {
+        POINT last_pos = {-1, -1};
         while (g_running) {
             POINT pos = {};
-            if (GetCursorPos(&pos)) {
+            if (GetCursorPos(&pos) && (pos.x != last_pos.x || pos.y != last_pos.y)) {
+                last_pos = pos;
                 float nx = static_cast<float>(pos.x) / screen_w;
                 float ny = static_cast<float>(pos.y) / screen_h;
                 uint32_t nx_be, ny_be;

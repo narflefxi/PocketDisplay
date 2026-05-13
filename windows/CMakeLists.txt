@@ -13,7 +13,6 @@ add_executable(PocketDisplay
     src/Encoder.cpp
     src/HwEncoder.cpp
     src/UdpStreamer.cpp
-    src/TcpStreamer.cpp
     src/TcpVideoServer.cpp
     src/AdbUsbSetup.cpp
     src/TouchReceiver.cpp

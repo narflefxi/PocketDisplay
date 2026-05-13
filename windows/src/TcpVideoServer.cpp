@@ -106,20 +106,32 @@ bool TcpVideoServer::SendFrame(const uint8_t* data, size_t size, uint32_t /*fram
     else if ((flags & FLAG_STREAM_INFO) != 0) t = kStreamInfo;
     else if ((flags & FLAG_CURSOR_POS) != 0) t = kCursor;
 
-    SOCKET s = INVALID_SOCKET;
-    {
-        std::lock_guard<std::mutex> lock(client_mu_);
-        s = client_sock_;
-    }
-    if (s == INVALID_SOCKET) return false;
-
     const uint32_t body = static_cast<uint32_t>(1u + size);
     if (body < 1) return false;
 
+    switch (t) {
+        case kStreamInfo:
+            std::cout << "  [USB/video] send type=" << static_cast<int>(t)
+                      << " display_size payload=" << size << "\n";
+            break;
+        case kCodec:
+            std::cout << "  [USB/video] send type=" << static_cast<int>(t)
+                      << " codec_config payload=" << size << "\n";
+            break;
+        case kVideo:
+            std::cout << "  [USB/video] send type=" << static_cast<int>(t)
+                      << " video_frame payload=" << size << "\n";
+            break;
+        case kCursor:
+            break;
+    }
+
     const uint32_t be = htonl(body);
-    if (!SendAll(s, reinterpret_cast<const uint8_t*>(&be), 4)) return false;
-    if (!SendAll(s, reinterpret_cast<const uint8_t*>(&t), 1)) return false;
-    if (size > 0 && !SendAll(s, data, static_cast<int>(size))) return false;
+    std::lock_guard<std::mutex> lock(client_mu_);
+    if (client_sock_ == INVALID_SOCKET) return false;
+    if (!SendAll(client_sock_, reinterpret_cast<const uint8_t*>(&be), 4)) return false;
+    if (!SendAll(client_sock_, reinterpret_cast<const uint8_t*>(&t), 1)) return false;
+    if (size > 0 && !SendAll(client_sock_, data, static_cast<int>(size))) return false;
     return true;
 }
 
