@@ -10,10 +10,12 @@ class VideoDecoder(
     private val surface: Surface,
     private val onStatus: (String) -> Unit,
     private val onDimensions: ((width: Int, height: Int) -> Unit)? = null,
-    private val onConfigured: (() -> Unit)? = null
+    private val onConfigured: (() -> Unit)? = null,
+    private val onFirstFrame: (() -> Unit)? = null
 ) {
     private var codec: MediaCodec? = null
     @Volatile private var running = false
+    @Volatile private var firstFrameDispatched = false
     private var lastSpsData: ByteArray? = null
 
     fun configure(spsData: ByteArray) {
@@ -39,8 +41,9 @@ class VideoDecoder(
             val c = MediaCodec.createDecoderByType("video/avc")
             c.configure(format, surface, null, 0)
             c.start()
-            codec   = c
-            running = true
+            codec                = c
+            running              = true
+            firstFrameDispatched = false
             startOutputDrain()
             onStatus("Decoder ready")
             onConfigured?.invoke()
@@ -76,7 +79,13 @@ class VideoDecoder(
                                 if (w > 0 && h > 0) onDimensions?.invoke(w, h)
                             }
                         }
-                        in 0..Int.MAX_VALUE -> codec?.releaseOutputBuffer(idx, /*render=*/true)
+                        in 0..Int.MAX_VALUE -> {
+                                codec?.releaseOutputBuffer(idx, /*render=*/true)
+                                if (!firstFrameDispatched) {
+                                    firstFrameDispatched = true
+                                    onFirstFrame?.invoke()
+                                }
+                            }
                     }
                 } catch (_: Exception) { break }
             }

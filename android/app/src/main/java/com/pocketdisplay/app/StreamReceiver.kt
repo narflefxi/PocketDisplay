@@ -15,7 +15,8 @@ class StreamReceiver(
     private val onSenderIp: ((String) -> Unit)? = null,
     private val onWindowsSize: ((Int, Int) -> Unit)? = null,
     private val onCursorPos: ((Float, Float, Int) -> Unit)? = null,
-    onCodecConfigured: (() -> Unit)? = null
+    onCodecConfigured: (() -> Unit)? = null,
+    onFirstFrame: (() -> Unit)? = null
 ) {
     companion object {
         const val PORT             = 7777
@@ -32,7 +33,7 @@ class StreamReceiver(
 
     @Volatile var isRunning = false
     private var udpSocket: DatagramSocket? = null
-    private val decoder = VideoDecoder(surface, onStatus, onDimensions, onCodecConfigured)
+    private val decoder = VideoDecoder(surface, onStatus, onDimensions, onCodecConfigured, onFirstFrame)
 
     private val frameBuffer = LinkedHashMap<Int, FrameAssembly>()
     private var latestFrameId = 0

@@ -27,7 +27,8 @@ class TcpStreamReceiver(
     private val onSenderIp: ((String) -> Unit)? = null,
     private val onWindowsSize: ((Int, Int) -> Unit)? = null,
     private val onCursorPos: ((Float, Float, Int) -> Unit)? = null,
-    onCodecConfigured: (() -> Unit)? = null
+    onCodecConfigured: (() -> Unit)? = null,
+    onFirstFrame: (() -> Unit)? = null
 ) {
     companion object {
         private const val TAG = "PocketDisplay"
@@ -38,7 +39,7 @@ class TcpStreamReceiver(
     @Volatile var isRunning = false
     private var netThread: Thread? = null
     @Volatile private var activeSocket: Socket? = null
-    private val decoder = VideoDecoder(surface, onStatus, onDimensions, onCodecConfigured)
+    private val decoder = VideoDecoder(surface, onStatus, onDimensions, onCodecConfigured, onFirstFrame)
 
     private var videoPackets = 0L
 

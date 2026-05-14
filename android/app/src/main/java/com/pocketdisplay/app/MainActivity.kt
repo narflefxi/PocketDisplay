@@ -75,6 +75,12 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
 
     private var transformLogged = false
 
+    // First-frame loading cover
+    private val firstFrameHandler = Handler(Looper.getMainLooper())
+    private val firstFrameTimeoutRunnable = Runnable {
+        updateStatus("Connecting\u2026 (waiting for video)")
+    }
+
     /** Coalesced UI update: decoder / network callbacks can race with layout & [setDefaultBufferSize]. */
     private val applyFillTransformRunnable = Runnable { applyFillTransform() }
 
@@ -176,7 +182,8 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
                 onSenderIp        = ::onWindowsIpKnown,
                 onWindowsSize     = ::onWindowsSizeKnown,
                 onCursorPos       = ::onWindowsCursorPos,
-                onCodecConfigured = ::onCodecConfigured
+                onCodecConfigured = ::onCodecConfigured,
+                onFirstFrame      = ::onFirstFrame
             )
             tcpReceiver?.start()
         } else {
@@ -187,19 +194,26 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
                 onSenderIp        = ::onWindowsIpKnown,
                 onWindowsSize     = ::onWindowsSizeKnown,
                 onCursorPos       = ::onWindowsCursorPos,
-                onCodecConfigured = ::onCodecConfigured
+                onCodecConfigured = ::onCodecConfigured,
+                onFirstFrame      = ::onFirstFrame
             )
             receiver?.start()
         }
 
+        binding.videoLoadingCover.visibility = View.VISIBLE
+        firstFrameHandler.removeCallbacks(firstFrameTimeoutRunnable)
+        firstFrameHandler.postDelayed(firstFrameTimeoutRunnable, 5000)
+
         binding.btnConnect.text = "Disconnect"
         binding.btnKeyboard.isEnabled = true
         setStatusDot(connected = false)
-        updateStatus(if (usbMode) "USB: connecting to 127.0.0.1… (run PocketDisplay.exe --usb on PC)"
-                     else "Waiting for stream on :${StreamReceiver.PORT}…")
+        updateStatus(if (usbMode) "USB: connecting to 127.0.0.1\u2026 (run PocketDisplay.exe --usb on PC)"
+                     else "Waiting for stream on :${StreamReceiver.PORT}\u2026")
     }
 
     private fun stopReceiver() {
+        firstFrameHandler.removeCallbacks(firstFrameTimeoutRunnable)
+        binding.videoLoadingCover.visibility = View.GONE
         binding.textureView.removeCallbacks(applyFillTransformRunnable)
         receiver?.stop(); receiver = null
         tcpReceiver?.stop(); tcpReceiver = null
@@ -247,6 +261,11 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         val sx = nx * vw
         val sy = ny * vh
         runOnUiThread { binding.cursorOverlay.moveTo(sx, sy, type) }
+    }
+
+    private fun onFirstFrame() {
+        firstFrameHandler.removeCallbacks(firstFrameTimeoutRunnable)
+        runOnUiThread { binding.videoLoadingCover.visibility = View.GONE }
     }
 
     private fun onCodecConfigured() {
