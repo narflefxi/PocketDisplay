@@ -80,6 +80,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     private val firstFrameTimeoutRunnable = Runnable {
         updateStatus("Connecting\u2026 (waiting for video)")
     }
+    @Volatile private var videoShowPending = false
 
     /** Coalesced UI update: decoder / network callbacks can race with layout & [setDefaultBufferSize]. */
     private val applyFillTransformRunnable = Runnable { applyFillTransform() }
@@ -161,6 +162,9 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     }
 
     private fun startReceiver() {
+        binding.textureView.animate().cancel()
+        binding.textureView.alpha = 0f
+        videoShowPending = true
         val st = binding.textureView.surfaceTexture ?: return
 
         if (!usbMode) {
@@ -213,7 +217,10 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
 
     private fun stopReceiver() {
         firstFrameHandler.removeCallbacks(firstFrameTimeoutRunnable)
+        videoShowPending = false
         binding.videoLoadingCover.visibility = View.GONE
+        binding.textureView.animate().cancel()
+        binding.textureView.alpha = 1f
         binding.textureView.removeCallbacks(applyFillTransformRunnable)
         receiver?.stop(); receiver = null
         tcpReceiver?.stop(); tcpReceiver = null
@@ -542,7 +549,15 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         return true
     }
 
-    override fun onSurfaceTextureUpdated(st: SurfaceTexture) { framesDecoded++ }
+    override fun onSurfaceTextureUpdated(st: SurfaceTexture) {
+        framesDecoded++
+        if (videoShowPending) {
+            videoShowPending = false
+            firstFrameHandler.removeCallbacks(firstFrameTimeoutRunnable)
+            binding.videoLoadingCover.visibility = View.GONE
+            binding.textureView.animate().alpha(1f).setDuration(200).start()
+        }
+    }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
