@@ -333,25 +333,67 @@ int main(int argc, char* argv[]) {
         }
     });
 
-    // ── Cursor position thread (60 Hz) ───────────────────────────────────────
+    // ── Cursor position + type thread (60 Hz) ────────────────────────────────
 
     const int screen_w = GetSystemMetrics(SM_CXSCREEN);
     const int screen_h = GetSystemMetrics(SM_CYSCREEN);
     std::thread cursor_thread([&]() {
-        POINT last_pos = {-1, -1};
+        // Preload shared system cursor handles once for fast comparison.
+        const HCURSOR c_ibeam    = LoadCursor(NULL, IDC_IBEAM);
+        const HCURSOR c_wait     = LoadCursor(NULL, IDC_WAIT);
+        const HCURSOR c_cross    = LoadCursor(NULL, IDC_CROSS);
+        const HCURSOR c_sizewe   = LoadCursor(NULL, IDC_SIZEWE);
+        const HCURSOR c_sizens   = LoadCursor(NULL, IDC_SIZENS);
+        const HCURSOR c_sizenwse = LoadCursor(NULL, IDC_SIZENWSE);
+        const HCURSOR c_sizenesw = LoadCursor(NULL, IDC_SIZENESW);
+        const HCURSOR c_sizeall  = LoadCursor(NULL, IDC_SIZEALL);
+        const HCURSOR c_hand     = LoadCursor(NULL, IDC_HAND);
+        const HCURSOR c_no       = LoadCursor(NULL, IDC_NO);
+        const HCURSOR c_appstart = LoadCursor(NULL, IDC_APPSTARTING);
+
+        POINT   last_pos  = {-1, -1};
+        uint8_t last_type = 0xFF;
+
         while (g_running) {
-            POINT pos = {};
-            if (GetCursorPos(&pos) && (pos.x != last_pos.x || pos.y != last_pos.y)) {
-                last_pos = pos;
-                float nx = static_cast<float>(pos.x) / screen_w;
-                float ny = static_cast<float>(pos.y) / screen_h;
+            POINT      pos = {};
+            CURSORINFO ci  = {};
+            ci.cbSize      = sizeof(ci);
+            const bool got_pos = GetCursorPos(&pos);
+            const bool got_ci  = GetCursorInfo(&ci);
+
+            uint8_t cur_type = 0;
+            if (got_ci) {
+                const HCURSOR hc = ci.hCursor;
+                if      (hc == c_ibeam)    cur_type = 1;
+                else if (hc == c_wait)     cur_type = 2;
+                else if (hc == c_cross)    cur_type = 3;
+                else if (hc == c_sizewe)   cur_type = 4;
+                else if (hc == c_sizens)   cur_type = 5;
+                else if (hc == c_sizenwse) cur_type = 6;
+                else if (hc == c_sizenesw) cur_type = 7;
+                else if (hc == c_sizeall)  cur_type = 8;
+                else if (hc == c_hand)     cur_type = 9;
+                else if (hc == c_no)       cur_type = 10;
+                else if (hc == c_appstart) cur_type = 11;
+            }
+
+            const bool pos_changed  = got_pos && (pos.x != last_pos.x || pos.y != last_pos.y);
+            const bool type_changed = cur_type != last_type;
+
+            if (pos_changed || type_changed) {
+                if (pos_changed)  last_pos  = pos;
+                if (type_changed) last_type = cur_type;
+
+                float nx = static_cast<float>(last_pos.x) / screen_w;
+                float ny = static_cast<float>(last_pos.y) / screen_h;
                 uint32_t nx_be, ny_be;
                 std::memcpy(&nx_be, &nx, 4); nx_be = htonl(nx_be);
                 std::memcpy(&ny_be, &ny, 4); ny_be = htonl(ny_be);
-                uint8_t payload[8];
+                uint8_t payload[9];
                 std::memcpy(payload,     &nx_be, 4);
                 std::memcpy(payload + 4, &ny_be, 4);
-                streamer->SendFrame(payload, 8, 0, pocketdisplay::FLAG_CURSOR_POS);
+                payload[8] = last_type;
+                streamer->SendFrame(payload, 9, 0, pocketdisplay::FLAG_CURSOR_POS);
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(16));
         }

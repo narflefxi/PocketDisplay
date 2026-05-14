@@ -14,7 +14,7 @@ class StreamReceiver(
     onDimensions: ((Int, Int) -> Unit)? = null,
     private val onSenderIp: ((String) -> Unit)? = null,
     private val onWindowsSize: ((Int, Int) -> Unit)? = null,
-    private val onCursorPos: ((Float, Float) -> Unit)? = null,
+    private val onCursorPos: ((Float, Float, Int) -> Unit)? = null,
     onCodecConfigured: (() -> Unit)? = null
 ) {
     companion object {
@@ -102,7 +102,7 @@ class StreamReceiver(
         if (flags == FLAG_CURSOR_POS) {
             if (payloadLen >= 8) {
                 val cb = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN)
-                onCursorPos?.invoke(cb.float, cb.float)
+                onCursorPos?.invoke(cb.float, cb.float, 0)
             }
             return
         }

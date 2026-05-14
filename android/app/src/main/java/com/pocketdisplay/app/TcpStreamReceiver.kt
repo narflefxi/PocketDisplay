@@ -26,7 +26,7 @@ class TcpStreamReceiver(
     private val onDimensions: ((Int, Int) -> Unit)? = null,
     private val onSenderIp: ((String) -> Unit)? = null,
     private val onWindowsSize: ((Int, Int) -> Unit)? = null,
-    private val onCursorPos: ((Float, Float) -> Unit)? = null,
+    private val onCursorPos: ((Float, Float, Int) -> Unit)? = null,
     onCodecConfigured: (() -> Unit)? = null
 ) {
     companion object {
@@ -97,7 +97,9 @@ class TcpStreamReceiver(
                         3 -> {
                             if (body.size >= 8) {
                                 val bb = ByteBuffer.wrap(body).order(ByteOrder.BIG_ENDIAN)
-                                onCursorPos?.invoke(bb.float, bb.float)
+                                val nx = bb.float; val ny = bb.float
+                                val cursorType = if (body.size >= 9) (body[8].toInt() and 0xFF) else 0
+                                onCursorPos?.invoke(nx, ny, cursorType)
                             }
                         }
                         0 -> {

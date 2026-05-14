@@ -17,7 +17,7 @@
 //   type 0 = H.264 access unit (same bytes as UDP assembled frame)
 //   type 1 = codec config (Annex-B SPS+PPS)
 //   type 2 = stream info (8 bytes: uint32 BE width, uint32 BE height)
-//   type 3 = cursor (8 bytes: float BE nx, float BE ny)
+//   type 3 = cursor (9 bytes: float BE nx, float BE ny, uint8 cursor_type)
 
 class TcpVideoServer {
 public:

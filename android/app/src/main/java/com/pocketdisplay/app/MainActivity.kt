@@ -240,13 +240,13 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         scheduleApplyFillTransform()
     }
 
-    private fun onWindowsCursorPos(nx: Float, ny: Float) {
+    private fun onWindowsCursorPos(nx: Float, ny: Float, type: Int) {
         val vw = binding.textureView.width.toFloat()
         val vh = binding.textureView.height.toFloat()
         if (vw == 0f || vh == 0f) return
         val sx = nx * vw
         val sy = ny * vh
-        runOnUiThread { binding.cursorOverlay.moveTo(sx, sy) }
+        runOnUiThread { binding.cursorOverlay.moveTo(sx, sy, type) }
     }
 
     private fun onCodecConfigured() {
