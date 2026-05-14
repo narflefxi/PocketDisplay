@@ -12,7 +12,7 @@ enum PacketFlags : uint8_t {
     FLAG_CODEC_CONFIG = 0x01,  // SPS/PPS headers
     FLAG_KEYFRAME     = 0x02,  // IDR frame
     FLAG_STREAM_INFO  = 0x04,  // 8-byte payload: uint32 width + uint32 height (network byte order)
-    FLAG_CURSOR_POS   = 0x08,  // 8-byte payload: float nx + float ny (network byte order, normalized [0,1])
+    FLAG_CURSOR_POS   = 0x08,  // 9-byte payload: float nx + float ny + uint8 cursor_type (network byte order, normalized [0,1])
 };
 
 #pragma pack(push, 1)

@@ -103,7 +103,9 @@ class StreamReceiver(
         if (flags == FLAG_CURSOR_POS) {
             if (payloadLen >= 8) {
                 val cb = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN)
-                onCursorPos?.invoke(cb.float, cb.float, 0)
+                val nx = cb.float; val ny = cb.float
+                val cursorType = if (payloadLen >= 9) (payload[8].toInt() and 0xFF) else 0
+                onCursorPos?.invoke(nx, ny, cursorType)
             }
             return
         }
