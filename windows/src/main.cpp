@@ -60,42 +60,93 @@ static void PrintUsage(const char* exe) {
               << "  " << exe << " --usb --monitor=2\n";
 }
 
-// ── DXGI output enumerator ────────────────────────────────────────────────────
-// Prints available monitors on adapter 0 and returns the output index to use.
-static int PickOutputIdx(bool extend, int monitor_num) {
-    using Microsoft::WRL::ComPtr;
-    ComPtr<ID3D11Device> dev;
-    if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
-                                  0, nullptr, 0, D3D11_SDK_VERSION,
-                                  &dev, nullptr, nullptr))) {
-        std::cerr << "      WARNING: Could not enumerate outputs, defaulting to 0\n";
-        return monitor_num > 0 ? std::max(0, monitor_num - 1) : 0;
-    }
-    ComPtr<IDXGIDevice> dxgi_dev;
-    dev.As(&dxgi_dev);
-    ComPtr<IDXGIAdapter> adapter;
-    dxgi_dev->GetAdapter(&adapter);
+// ── Monitor selection ─────────────────────────────────────────────────────────
+struct MonitorSel { int adapter = 0; int output = 0; int number = 1; };
 
-    int last_idx = 0;
-    for (int i = 0; ; ++i) {
-        ComPtr<IDXGIOutput> out;
-        if (FAILED(adapter->EnumOutputs(i, &out))) break;
-        DXGI_OUTPUT_DESC d = {};
-        out->GetDesc(&d);
-        char nm[64] = {};
-        WideCharToMultiByte(CP_UTF8, 0, d.DeviceName, -1, nm, sizeof(nm), nullptr, nullptr);
-        SetColor(GRAY);
-        std::cout << "      [" << (i + 1) << "] " << nm
-                  << "  " << (d.DesktopCoordinates.right  - d.DesktopCoordinates.left)
-                  << "x" << (d.DesktopCoordinates.bottom - d.DesktopCoordinates.top)
-                  << " @(" << d.DesktopCoordinates.left << "," << d.DesktopCoordinates.top << ")"
-                  << (d.AttachedToDesktop ? "" : "  [inactive]") << "\n";
-        ResetColor();
-        last_idx = i;
+// Enumerates all active outputs across all DXGI adapters, prints the list,
+// and returns the adapter/output indices for the selected monitor.
+static MonitorSel PickMonitor(bool extend, int monitor_num) {
+    using Microsoft::WRL::ComPtr;
+
+    ComPtr<IDXGIFactory1> factory;
+    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1),
+                                   reinterpret_cast<void**>(factory.GetAddressOf())))) {
+        std::cerr << "      WARNING: CreateDXGIFactory1 failed, using defaults\n";
+        return {};
     }
-    if (monitor_num > 0) return std::max(0, monitor_num - 1);
-    if (extend)          return last_idx;
-    return 0;
+
+    // Primary monitor device name for labelling.
+    HMONITOR primary_hmon = MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
+    MONITORINFOEXW prim_info = {};
+    prim_info.cbSize = sizeof(prim_info);
+    GetMonitorInfoW(primary_hmon, reinterpret_cast<MONITORINFO*>(&prim_info));
+
+    struct Entry { int ai, oi; DXGI_OUTPUT_DESC desc; };
+    std::vector<Entry> mons;
+
+    for (int ai = 0; ; ++ai) {
+        ComPtr<IDXGIAdapter> adapter;
+        if (FAILED(factory->EnumAdapters(ai, &adapter))) break;
+        for (int oi = 0; ; ++oi) {
+            ComPtr<IDXGIOutput> out;
+            if (FAILED(adapter->EnumOutputs(oi, &out))) break;
+            DXGI_OUTPUT_DESC d = {};
+            out->GetDesc(&d);
+            if (!d.AttachedToDesktop) continue;
+            mons.push_back({ai, oi, d});
+        }
+    }
+
+    if (mons.empty()) {
+        std::cerr << "      WARNING: No active monitors found\n";
+        return {};
+    }
+
+    for (int i = 0; i < (int)mons.size(); ++i) {
+        const auto& m = mons[i];
+        const int w = m.desc.DesktopCoordinates.right  - m.desc.DesktopCoordinates.left;
+        const int h = m.desc.DesktopCoordinates.bottom - m.desc.DesktopCoordinates.top;
+        const bool is_primary = (wcscmp(m.desc.DeviceName, prim_info.szDevice) == 0);
+
+        DISPLAY_DEVICEW dd = {}; dd.cb = sizeof(dd);
+        EnumDisplayDevicesW(m.desc.DeviceName, 0, &dd, 0);
+        const bool is_virtual =
+            (dd.StateFlags & DISPLAY_DEVICE_MIRRORING_DRIVER) != 0
+            || wcsstr(dd.DeviceString, L"Virtual")  != nullptr
+            || wcsstr(dd.DeviceString, L"Indirect") != nullptr
+            || wcsstr(dd.DeviceString, L"IDD")      != nullptr
+            || wcsstr(dd.DeviceString, L"Dummy")    != nullptr;
+
+        char nm[64] = {};
+        WideCharToMultiByte(CP_UTF8, 0, m.desc.DeviceName, -1, nm, sizeof(nm), nullptr, nullptr);
+        SetColor(GRAY);
+        std::cout << "      Monitor " << (i + 1) << ": " << nm
+                  << "  " << w << "x" << h;
+        if (is_primary)      std::cout << "  (PRIMARY)";
+        else if (is_virtual) std::cout << "  (VIRTUAL)";
+        std::cout << "\n";
+        ResetColor();
+    }
+
+    // Default: primary monitor.
+    int idx = 0;
+    for (int i = 0; i < (int)mons.size(); ++i) {
+        if (wcscmp(mons[i].desc.DeviceName, prim_info.szDevice) == 0) { idx = i; break; }
+    }
+    if      (monitor_num > 0 && monitor_num <= (int)mons.size()) idx = monitor_num - 1;
+    else if (extend && !mons.empty())                            idx = (int)mons.size() - 1;
+
+    const auto& sel = mons[idx];
+    char selnm[64] = {};
+    WideCharToMultiByte(CP_UTF8, 0, sel.desc.DeviceName, -1, selnm, sizeof(selnm), nullptr, nullptr);
+    const int sw = sel.desc.DesktopCoordinates.right  - sel.desc.DesktopCoordinates.left;
+    const int sh = sel.desc.DesktopCoordinates.bottom - sel.desc.DesktopCoordinates.top;
+    SetColor(CYAN);
+    std::cout << "      Capturing monitor " << (idx + 1) << ": " << selnm
+              << "  " << sw << "x" << sh << "\n";
+    ResetColor();
+
+    return {sel.ai, sel.oi, idx + 1};
 }
 
 // ── Signal ──────────────────────────────────────────────────────────────────
@@ -223,25 +274,24 @@ int main(int argc, char* argv[]) {
 
     SetColor(CYAN);
     std::cout << "[1/4] Screen capture...\n";
-    int output_idx = 0;
-    if (extended) {
-        std::cout << "      Available monitors (adapter 0):\n";
-        output_idx = PickOutputIdx(extend_mode, monitor_num);
-    }
     ResetColor();
 
+    const MonitorSel mon_sel = PickMonitor(extend_mode, monitor_num);
+
     ScreenCapture capture;
-    if (!capture.Initialize(0, output_idx)) {
+    if (!capture.Initialize(mon_sel.adapter, mon_sel.output)) {
         SetColor(RED);
-        std::cerr << "  ERROR: DXGI Desktop Duplication failed (monitor " << (output_idx + 1) << ").\n";
+        std::cerr << "  ERROR: DXGI Desktop Duplication failed for monitor "
+                  << mon_sel.number << " (adapter " << mon_sel.adapter
+                  << ", output " << mon_sel.output << ").\n"
+                  << "         Ensure the monitor is active and supports desktop duplication.\n";
         ResetColor();
         return 1;
     }
     SetColor(GREEN);
-    std::cout << "      Display [" << (output_idx + 1) << "]: "
-              << capture.GetWidth() << "x" << capture.GetHeight();
-    if (extended) std::cout << "  (extended mode)";
-    std::cout << "\n";
+    std::cout << "      Capture ready: "
+              << capture.GetWidth() << "x" << capture.GetHeight()
+              << (extended ? "  (extended mode)" : "") << "\n";
     ResetColor();
 
     // ── Encoder ─────────────────────────────────────────────────────────────

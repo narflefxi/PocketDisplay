@@ -6,21 +6,23 @@ ScreenCapture::~ScreenCapture() {
     Release();
 }
 
-bool ScreenCapture::Initialize(int /*adapter_idx*/, int output_idx) {
-    D3D_FEATURE_LEVEL feat_level;
-    HRESULT hr = D3D11CreateDevice(
-        nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
-        0, nullptr, 0, D3D11_SDK_VERSION,
-        &device_, &feat_level, &context_
-    );
-    if (FAILED(hr)) return false;
-
-    Microsoft::WRL::ComPtr<IDXGIDevice> dxgi_device;
-    hr = device_.As(&dxgi_device);
+bool ScreenCapture::Initialize(int adapter_idx, int output_idx) {
+    // Use IDXGIFactory so adapter_idx is consistent with PickMonitor's enumeration.
+    Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
+    HRESULT hr = CreateDXGIFactory1(__uuidof(IDXGIFactory1),
+                                    reinterpret_cast<void**>(factory.GetAddressOf()));
     if (FAILED(hr)) return false;
 
     Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
-    hr = dxgi_device->GetAdapter(&adapter);
+    hr = factory->EnumAdapters(adapter_idx, &adapter);
+    if (FAILED(hr)) return false;
+
+    D3D_FEATURE_LEVEL feat_level;
+    hr = D3D11CreateDevice(
+        adapter.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr,
+        0, nullptr, 0, D3D11_SDK_VERSION,
+        &device_, &feat_level, &context_
+    );
     if (FAILED(hr)) return false;
 
     Microsoft::WRL::ComPtr<IDXGIOutput> output;
