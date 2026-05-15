@@ -17,6 +17,7 @@ import android.view.TextureView
 import android.view.View
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.pocketdisplay.app.databinding.ActivityMainBinding
 import java.net.Inet4Address
@@ -35,6 +36,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     private var tcpReceiver: TcpStreamReceiver? = null
     private var discoverClient: DiscoveryClient? = null
     @Volatile private var discoveredHostIp: String? = null
+    @Volatile private var modeSelected: Boolean = false
 
     @Volatile private var videoW = 0
     @Volatile private var videoH = 0
@@ -151,6 +153,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         updateModeUi()
         if (!usb) {
             discoveredHostIp = null
+            modeSelected = false
             startDiscovery()
         } else {
             discoverClient?.stop(); discoverClient = null
@@ -229,6 +232,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         touchSender?.close(); touchSender = null
         discoverClient?.stop(); discoverClient = null
         discoveredHostIp = null
+        modeSelected = false
         videoW = 0; videoH = 0; windowsW = 0; windowsH = 0
         binding.cursorOverlay.hide()
         binding.tvExtendedBadge.visibility = View.GONE
@@ -558,27 +562,44 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         if (binding.textureView.surfaceTexture != null) autoStartIfNeeded()
     }
 
-    /** Starts discovery (WiFi) or video receiver (USB) without requiring a button tap. */
+    /** Starts receiver once all conditions are met: surface ready + (USB OR host found + mode chosen). */
     private fun autoStartIfNeeded() {
         if (receiver?.isRunning == true || tcpReceiver?.isRunning == true) return
         if (binding.textureView.surfaceTexture == null) return
-        if (!usbMode && discoveredHostIp == null) return  // WiFi: wait for discovery first
+        if (!usbMode && (discoveredHostIp == null || !modeSelected)) return
         startReceiver()
     }
 
-    /** Begins UDP discovery: listens for Windows broadcasts and stores the host IP. */
+    /** Begins UDP discovery: listens for Windows broadcasts and prompts for mode selection. */
     private fun startDiscovery() {
         if (discoverClient?.isRunning == true) return
         discoverClient?.stop()
         discoverClient = DiscoveryClient { hostIp, _ ->
             discoveredHostIp = hostIp
-            runOnUiThread {
-                updateStatus("Host found: $hostIp \u2014 connecting\u2026")
-                autoStartIfNeeded()
-            }
+            runOnUiThread { showModeDialog(hostIp) }
         }
         discoverClient?.start()
         if (receiver?.isRunning != true) updateStatus("Searching for PocketDisplay host\u2026")
+    }
+
+    /** Shows Mirror / Extended dialog; on selection sends mode to Windows and starts receiver. */
+    private fun showModeDialog(hostIp: String) {
+        updateStatus("Host found: $hostIp \u2014 select display mode")
+        AlertDialog.Builder(this)
+            .setTitle("Select Display Mode")
+            .setMessage("Connected to $hostIp\n\nHow should Windows share its screen?")
+            .setPositiveButton("Mirror") { _, _ ->
+                discoverClient?.sendMode(hostIp, "mirror")
+                modeSelected = true
+                autoStartIfNeeded()
+            }
+            .setNegativeButton("Extended") { _, _ ->
+                discoverClient?.sendMode(hostIp, "extend")
+                modeSelected = true
+                autoStartIfNeeded()
+            }
+            .setCancelable(false)
+            .show()
     }
 
     override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {

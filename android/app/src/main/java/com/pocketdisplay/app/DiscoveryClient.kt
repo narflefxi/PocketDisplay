@@ -89,6 +89,22 @@ class DiscoveryClient(private val onHostFound: (hostIp: String, videoPort: Int) 
         thread = null
     }
 
+    /** Sends the user's display mode choice to Windows on port [DISCOVERY_PORT]. */
+    fun sendMode(hostIp: String, mode: String) {
+        Thread {
+            try {
+                DatagramSocket().use { s ->
+                    val bytes = "POCKETDISPLAY_MODE:$mode".toByteArray()
+                    s.send(DatagramPacket(bytes, bytes.size,
+                        InetAddress.getByName(hostIp), DISCOVERY_PORT))
+                    Log.d(TAG, "Mode sent: $mode -> $hostIp")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "sendMode error: ${e.message}")
+            }
+        }.also { it.isDaemon = true; it.start() }
+    }
+
     private fun getLocalIp(): String? = try {
         NetworkInterface.getNetworkInterfaces()
             ?.asSequence()

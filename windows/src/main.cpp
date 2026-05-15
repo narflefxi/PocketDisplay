@@ -209,71 +209,103 @@ static bool DetectUsbDevice() {
     return found;
 }
 
-// Broadcasts POCKETDISPLAY_HOST on LAN:7779 every 2 s and waits for an
-// Android POCKETDISPLAY_CLIENT reply. Returns the Android IP or "".
-static std::string DiscoverAndroidIp(const std::string& local_ip, uint16_t video_port,
-                                      bool verbose = true) {
+// Returns the /24 subnet broadcast for local_ip (e.g. 192.168.1.5 → 192.168.1.255).
+static std::string GetSubnetBroadcast(const std::string& local_ip) {
+    const size_t dot = local_ip.rfind('.');
+    return (dot != std::string::npos) ? local_ip.substr(0, dot + 1) + "255"
+                                       : "255.255.255.255";
+}
+
+// Discovery result returned by RunDiscovery.
+struct DiscResult { std::string android_ip; bool extend = false; };
+
+// Phase 1: broadcast POCKETDISPLAY_HOST on 255.255.255.255 + subnet broadcast.
+// Phase 2: once Android replies, wait for POCKETDISPLAY_MODE (30 s → Mirror default).
+static DiscResult RunDiscovery(const std::string& local_ip, uint16_t video_port) {
+    DiscResult result;
     SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (sock == INVALID_SOCKET) return "";
+    if (sock == INVALID_SOCKET) return result;
 
-    BOOL opt = TRUE;
-    setsockopt(sock, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<char*>(&opt), sizeof(opt));
-    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<char*>(&opt), sizeof(opt));
+    BOOL on = TRUE;
+    setsockopt(sock, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<char*>(&on), sizeof(on));
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,  reinterpret_cast<char*>(&on), sizeof(on));
 
-    sockaddr_in bind_addr = {};
-    bind_addr.sin_family      = AF_INET;
-    bind_addr.sin_port        = htons(DISC_PORT);
-    bind_addr.sin_addr.s_addr = INADDR_ANY;
-    if (bind(sock, reinterpret_cast<sockaddr*>(&bind_addr), sizeof(bind_addr)) != 0) {
-        closesocket(sock); return "";
+    sockaddr_in ba = {};
+    ba.sin_family = AF_INET; ba.sin_port = htons(DISC_PORT); ba.sin_addr.s_addr = INADDR_ANY;
+    if (bind(sock, reinterpret_cast<sockaddr*>(&ba), sizeof(ba)) != 0) {
+        closesocket(sock); return result;
     }
 
-    DWORD recv_timeout = 200;   // ms — short so Ctrl+C is responsive
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,
-               reinterpret_cast<char*>(&recv_timeout), sizeof(recv_timeout));
+    DWORD tmout = 200;
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<char*>(&tmout), sizeof(tmout));
 
-    sockaddr_in bcast = {};
-    bcast.sin_family      = AF_INET;
-    bcast.sin_port        = htons(DISC_PORT);
-    bcast.sin_addr.s_addr = INADDR_BROADCAST;
+    const std::string subnet_bcast = GetSubnetBroadcast(local_ip);
+    const bool dual = (subnet_bcast != "255.255.255.255");
 
-    const std::string announce =
+    sockaddr_in bc_all{}, bc_sub{};
+    bc_all.sin_family = AF_INET; bc_all.sin_port = htons(DISC_PORT);
+    bc_all.sin_addr.s_addr = INADDR_BROADCAST;
+    bc_sub.sin_family = AF_INET; bc_sub.sin_port = htons(DISC_PORT);
+    inet_pton(AF_INET, subnet_bcast.c_str(), &bc_sub.sin_addr);
+
+    const std::string ann =
         std::string("POCKETDISPLAY_HOST:") + local_ip + ":" + std::to_string(video_port);
+    auto do_bcast = [&]() {
+        sendto(sock, ann.c_str(), static_cast<int>(ann.size()), 0,
+               reinterpret_cast<sockaddr*>(&bc_all), sizeof(bc_all));
+        if (dual) sendto(sock, ann.c_str(), static_cast<int>(ann.size()), 0,
+               reinterpret_cast<sockaddr*>(&bc_sub), sizeof(bc_sub));
+    };
 
-    if (verbose) {
-        SetColor(CYAN);
-        std::cout << "      Local IP : " << local_ip << "\n";
-        std::cout << "      Waiting  : open PocketDisplay on Android (broadcasting on :"
-                  << DISC_PORT << ")...\n";
-        ResetColor();
-    }
+    SetColor(CYAN);
+    std::cout << "  Broadcasting to 255.255.255.255:" << DISC_PORT;
+    if (dual) std::cout << " and " << subnet_bcast << ":" << DISC_PORT;
+    std::cout << "\n  Local IP  : " << local_ip
+              << "  |  Open PocketDisplay on Android...\n";
+    ResetColor();
 
     auto last_bcast = std::chrono::steady_clock::now() - std::chrono::seconds(3);
+    bool phase2 = false;
+    std::chrono::steady_clock::time_point phase2_start;
+
     while (g_running) {
         const auto now = std::chrono::steady_clock::now();
         if (std::chrono::duration_cast<std::chrono::seconds>(now - last_bcast).count() >= 2) {
-            sendto(sock, announce.c_str(), static_cast<int>(announce.size()), 0,
-                   reinterpret_cast<sockaddr*>(&bcast), sizeof(bcast));
-            last_bcast = now;
+            do_bcast(); last_bcast = now;
         }
-        char buf[256] = {};
-        sockaddr_in from = {};
-        int flen = sizeof(from);
-        int n = recvfrom(sock, buf, static_cast<int>(sizeof(buf)) - 1, 0,
-                         reinterpret_cast<sockaddr*>(&from), &flen);
-        if (n > 0) {
-            std::string resp(buf, n);
-            while (!resp.empty() && (resp.back() == '\r' || resp.back() == '\n'))
-                resp.pop_back();
-            if (resp.rfind("POCKETDISPLAY_CLIENT:", 0) == 0) {
-                const std::string client_ip = resp.substr(21);
-                closesocket(sock);
-                return client_ip;
-            }
+        if (phase2 && (now - phase2_start) > std::chrono::seconds(30)) break; // timeout → Mirror
+
+        char buf[256]{};
+        sockaddr_in from{}; int flen = sizeof(from);
+        const int n = recvfrom(sock, buf, static_cast<int>(sizeof(buf)) - 1, 0,
+                               reinterpret_cast<sockaddr*>(&from), &flen);
+        if (n <= 0) continue;
+
+        std::string msg(buf, n);
+        while (!msg.empty() && (msg.back() == '\r' || msg.back() == '\n')) msg.pop_back();
+
+        if (!phase2 && msg.rfind("POCKETDISPLAY_CLIENT:", 0) == 0) {
+            result.android_ip = msg.substr(21);
+            phase2 = true; phase2_start = now;
+            SetColor(GREEN);
+            std::cout << "  Android connected: " << result.android_ip << "\n";
+            ResetColor();
+            SetColor(CYAN);
+            std::cout << "  Waiting for display mode selection on Android (30 s → Mirror)...\n";
+            ResetColor();
+        } else if (phase2 && msg.rfind("POCKETDISPLAY_MODE:", 0) == 0) {
+            const std::string mode = msg.substr(19);
+            result.extend = (mode == "extend");
+            SetColor(GREEN);
+            std::cout << "  Mode: " << (result.extend ? "Extended" : "Mirror") << "\n";
+            ResetColor();
+            break;
         }
     }
+
     closesocket(sock);
-    return "";
+    if (!g_running) return {};
+    return result;
 }
 
 // ── Live stats line (in-place update) ───────────────────────────────────────
@@ -394,26 +426,26 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Start broadcasting presence immediately so Android can connect while setup runs.
-    std::future<std::string> disc_future;
-    if (auto_discover) {
-        const std::string local_ip_early = GetLocalIp();
-        SetColor(CYAN);
-        std::cout << "  Broadcasting presence on :" << DISC_PORT
-                  << " \u2014 waiting for Android (open PocketDisplay app)...\n";
-        std::cout << "  Local IP : " << local_ip_early << "\n";
-        ResetColor();
-        disc_future = std::async(std::launch::async,
-            [local_ip_early, port]() {
-                return DiscoverAndroidIp(local_ip_early, port, false);
-            });
-    }
-
     if (usb_mode) target_ip = "127.0.0.1";
 
-    const bool extended = extend_mode || monitor_num > 0;
-
     std::signal(SIGINT, SignalHandler);
+
+    // WiFi auto-discovery + mode selection (blocks until Android selects or Ctrl+C).
+    if (auto_discover) {
+        const auto disc = RunDiscovery(GetLocalIp(), port);
+        if (!g_running) return 0;
+        if (disc.android_ip.empty()) {
+            SetColor(RED);
+            std::cerr << "  ERROR: No Android device responded.\n"
+                      << "         Run: " << argv[0] << " <android_ip>  to skip discovery.\n";
+            ResetColor();
+            return 1;
+        }
+        target_ip   = disc.android_ip;
+        extend_mode = disc.extend;
+    }
+
+    const bool extended = extend_mode || monitor_num > 0;
 
     const char* mode_name = usb_mode ? (extended ? "USB/EXT"  : "USB")
                                      : (extended ? "WiFi/EXT" : "WiFi");
@@ -485,23 +517,6 @@ int main(int argc, char* argv[]) {
     if (!target_ip.empty()) std::cout << " -> " << target_ip << ":" << port;
     std::cout << "\n";
     ResetColor();
-
-    // WiFi auto-discovery — wait for background broadcast thread result.
-    if (auto_discover) {
-        disc_future.wait();
-        if (!g_running) return 0;
-        target_ip = disc_future.get();
-        if (target_ip.empty()) {
-            SetColor(RED);
-            std::cerr << "  ERROR: No Android device responded.\n"
-                      << "         Run: " << argv[0] << " <android_ip>  to skip discovery.\n";
-            ResetColor();
-            return 1;
-        }
-        SetColor(GREEN);
-        std::cout << "      Android connected: " << target_ip << " \u2014 starting stream...\n";
-        ResetColor();
-    }
 
     std::unique_ptr<IStreamer> streamer;
     if (usb_mode) {
