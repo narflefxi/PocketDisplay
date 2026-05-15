@@ -16,6 +16,7 @@ import android.view.Surface
 import android.view.TextureView
 import android.view.View
 import android.view.WindowManager
+import android.net.wifi.WifiManager
 import android.view.inputmethod.InputMethodManager
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -37,6 +38,8 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     private var discoverClient: DiscoveryClient? = null
     @Volatile private var discoveredHostIp: String? = null
     @Volatile private var modeSelected: Boolean = false
+
+    private var multicastLock: WifiManager.MulticastLock? = null
 
     @Volatile private var videoW = 0
     @Volatile private var videoH = 0
@@ -116,6 +119,10 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
 
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        // Acquire multicast lock so WiFi doesn't filter out multicast discovery packets.
+        val wm = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
+        multicastLock = wm.createMulticastLock("PocketDisplay").also { it.acquire() }
 
         // Restore saved mode
         val prefs = getSharedPreferences(PREF_NAME, MODE_PRIVATE)
@@ -637,5 +644,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         super.onDestroy()
         statsHandler.removeCallbacks(statsRunnable)
         stopReceiver()
+        multicastLock?.release()
+        multicastLock = null
     }
 }

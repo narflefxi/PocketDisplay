@@ -5,6 +5,7 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.Inet4Address
 import java.net.InetAddress
+import java.net.MulticastSocket
 import java.net.NetworkInterface
 
 /**
@@ -18,6 +19,7 @@ class DiscoveryClient(private val onHostFound: (hostIp: String, videoPort: Int) 
         const val  DISCOVERY_PORT       = 7779
         private const val HOST_PREFIX   = "POCKETDISPLAY_HOST:"
         private const val CLIENT_PREFIX = "POCKETDISPLAY_CLIENT:"
+        private const val MCAST_GROUP   = "239.0.0.1"
     }
 
     @Volatile var isRunning = false
@@ -31,9 +33,12 @@ class DiscoveryClient(private val onHostFound: (hostIp: String, videoPort: Int) 
         isRunning = true
         thread = Thread({
             try {
-                val sock = DatagramSocket(DISCOVERY_PORT)
+                val mcastAddr = InetAddress.getByName(MCAST_GROUP)
+                val sock = MulticastSocket(DISCOVERY_PORT)
                 sock.soTimeout  = 200   // ms — keeps loop responsive to stop()
                 sock.broadcast  = true
+                sock.loopbackMode = false
+                sock.joinGroup(mcastAddr)
                 socket = sock
 
                 val buf      = ByteArray(512)
@@ -73,6 +78,7 @@ class DiscoveryClient(private val onHostFound: (hostIp: String, videoPort: Int) 
                         // Expected — just keeps the loop alive for stop() checks.
                     }
                 }
+                try { sock.leaveGroup(mcastAddr) } catch (_: Exception) {}
                 sock.close()
             } catch (e: Exception) {
                 Log.e(TAG, "Discovery thread error: ${e.message}")

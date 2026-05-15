@@ -242,11 +242,20 @@ static DiscResult RunDiscovery(const std::string& local_ip, uint16_t video_port)
     const std::string subnet_bcast = GetSubnetBroadcast(local_ip);
     const bool dual = (subnet_bcast != "255.255.255.255");
 
-    sockaddr_in bc_all{}, bc_sub{};
-    bc_all.sin_family = AF_INET; bc_all.sin_port = htons(DISC_PORT);
+    static constexpr const char* MCAST_GROUP = "239.0.0.1";
+
+    sockaddr_in bc_all{}, bc_sub{}, bc_mcast{};
+    bc_all.sin_family   = AF_INET; bc_all.sin_port   = htons(DISC_PORT);
     bc_all.sin_addr.s_addr = INADDR_BROADCAST;
-    bc_sub.sin_family = AF_INET; bc_sub.sin_port = htons(DISC_PORT);
+    bc_sub.sin_family   = AF_INET; bc_sub.sin_port   = htons(DISC_PORT);
     inet_pton(AF_INET, subnet_bcast.c_str(), &bc_sub.sin_addr);
+    bc_mcast.sin_family = AF_INET; bc_mcast.sin_port = htons(DISC_PORT);
+    inet_pton(AF_INET, MCAST_GROUP, &bc_mcast.sin_addr);
+
+    // Set multicast TTL so packets reach the local LAN.
+    DWORD mcast_ttl = 4;
+    setsockopt(sock, IPPROTO_IP, IP_MULTICAST_TTL,
+               reinterpret_cast<char*>(&mcast_ttl), sizeof(mcast_ttl));
 
     const std::string ann =
         std::string("POCKETDISPLAY_HOST:") + local_ip + ":" + std::to_string(video_port);
@@ -255,11 +264,14 @@ static DiscResult RunDiscovery(const std::string& local_ip, uint16_t video_port)
                reinterpret_cast<sockaddr*>(&bc_all), sizeof(bc_all));
         if (dual) sendto(sock, ann.c_str(), static_cast<int>(ann.size()), 0,
                reinterpret_cast<sockaddr*>(&bc_sub), sizeof(bc_sub));
+        sendto(sock, ann.c_str(), static_cast<int>(ann.size()), 0,
+               reinterpret_cast<sockaddr*>(&bc_mcast), sizeof(bc_mcast));
     };
 
     SetColor(CYAN);
     std::cout << "  Broadcasting to 255.255.255.255:" << DISC_PORT;
-    if (dual) std::cout << " and " << subnet_bcast << ":" << DISC_PORT;
+    if (dual) std::cout << " + " << subnet_bcast << ":" << DISC_PORT;
+    std::cout << " + " << MCAST_GROUP << ":" << DISC_PORT << " (multicast)";
     std::cout << "\n  Local IP  : " << local_ip
               << "  |  Open PocketDisplay on Android...\n";
     ResetColor();
@@ -378,6 +390,7 @@ struct TcpVideoServerWrap : IStreamer {
 
 int main(int argc, char* argv[]) {
     g_con = GetStdHandle(STD_OUTPUT_HANDLE);
+    WSADATA wsa{}; WSAStartup(MAKEWORD(2, 2), &wsa);  // must be before RunDiscovery
     PrintBanner();
 
     bool usb_mode     = false;
