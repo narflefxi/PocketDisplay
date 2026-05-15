@@ -33,8 +33,9 @@ bool ScreenCapture::Initialize(int /*adapter_idx*/, int output_idx) {
 
     DXGI_OUTPUT_DESC desc = {};
     output->GetDesc(&desc);
-    width_  = desc.DesktopCoordinates.right  - desc.DesktopCoordinates.left;
-    height_ = desc.DesktopCoordinates.bottom - desc.DesktopCoordinates.top;
+    monitor_rect_ = desc.DesktopCoordinates;
+    width_  = monitor_rect_.right  - monitor_rect_.left;
+    height_ = monitor_rect_.bottom - monitor_rect_.top;
 
     // Round down to even — required for 4:2:0 chroma subsampling
     width_  &= ~1;

@@ -174,14 +174,31 @@ void TouchReceiver::ApplyTouchEvent(uint8_t type, float nx, float ny) const {
         return;
     }
 
-    const LONG ax = static_cast<LONG>(nx * 65535.0f);
-    const LONG ay = static_cast<LONG>(ny * 65535.0f);
+    LONG  ax, ay;
+    DWORD move_flags;
+    if (extended_mode_) {
+        const float screen_x = static_cast<float>(mon_rect_.left) +
+                                nx * static_cast<float>(mon_rect_.right  - mon_rect_.left);
+        const float screen_y = static_cast<float>(mon_rect_.top)  +
+                                ny * static_cast<float>(mon_rect_.bottom - mon_rect_.top);
+        const int vl = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        const int vt = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        const int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        const int vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        ax = static_cast<LONG>((screen_x - vl) * 65535.0f / vw);
+        ay = static_cast<LONG>((screen_y - vt) * 65535.0f / vh);
+        move_flags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE | MOUSEEVENTF_VIRTUALDESK;
+    } else {
+        ax = static_cast<LONG>(nx * 65535.0f);
+        ay = static_cast<LONG>(ny * 65535.0f);
+        move_flags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
+    }
 
     INPUT inputs[3] = {};
     int   count     = 1;
 
     inputs[0].type       = INPUT_MOUSE;
-    inputs[0].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
+    inputs[0].mi.dwFlags = move_flags;
     inputs[0].mi.dx      = ax;
     inputs[0].mi.dy      = ay;
 

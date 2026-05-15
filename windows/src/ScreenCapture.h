@@ -13,8 +13,9 @@ public:
     bool Initialize(int adapter_idx = 0, int output_idx = 0);
     // Returns false if no new frame available within timeout, true on success.
     bool CaptureFrame(std::vector<uint8_t>& bgra_out, int& width, int& height);
-    int GetWidth()  const { return width_; }
-    int GetHeight() const { return height_; }
+    int  GetWidth()       const { return width_; }
+    int  GetHeight()      const { return height_; }
+    RECT GetMonitorRect() const { return monitor_rect_; }
     void Release();
 
 private:
@@ -24,6 +25,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D11DeviceContext>    context_;
     Microsoft::WRL::ComPtr<IDXGIOutputDuplication> duplication_;
     Microsoft::WRL::ComPtr<ID3D11Texture2D>        staging_;
-    int width_  = 0;
-    int height_ = 0;
+    int  width_  = 0;
+    int  height_ = 0;
+    RECT monitor_rect_ = {};
 };
