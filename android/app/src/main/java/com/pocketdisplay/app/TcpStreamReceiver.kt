@@ -16,7 +16,7 @@ import kotlin.concurrent.thread
  *   [4-byte uint32 length L][L bytes: uint8 type + payload]
  * type 0 = H.264 access unit
  * type 1 = codec config (Annex-B SPS+PPS)
- * type 2 = stream info (8 bytes: w,h uint32 BE)
+ * type 2 = stream info (8–12 bytes: w,h uint32 BE [+ flags uint32 BE: bit0=extended])
  * type 3 = cursor (8 bytes: float BE nx, ny)
  */
 class TcpStreamReceiver(
@@ -28,7 +28,8 @@ class TcpStreamReceiver(
     private val onWindowsSize: ((Int, Int) -> Unit)? = null,
     private val onCursorPos: ((Float, Float, Int) -> Unit)? = null,
     onCodecConfigured: (() -> Unit)? = null,
-    onFirstFrame: (() -> Unit)? = null
+    onFirstFrame: (() -> Unit)? = null,
+    private val onMode: ((Int) -> Unit)? = null
 ) {
     companion object {
         private const val TAG = "PocketDisplay"
@@ -90,9 +91,9 @@ class TcpStreamReceiver(
                         2 -> {
                             if (body.size >= 8) {
                                 val bb = ByteBuffer.wrap(body).order(ByteOrder.BIG_ENDIAN)
-                                val w = bb.int
-                                val h = bb.int
+                                val w = bb.int; val h = bb.int
                                 if (w > 0 && h > 0) onWindowsSize?.invoke(w, h)
+                                if (body.size >= 12) onMode?.invoke(bb.int)
                             }
                         }
                         3 -> {

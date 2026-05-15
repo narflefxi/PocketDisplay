@@ -187,7 +187,8 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
                 onWindowsSize     = ::onWindowsSizeKnown,
                 onCursorPos       = ::onWindowsCursorPos,
                 onCodecConfigured = ::onCodecConfigured,
-                onFirstFrame      = ::onFirstFrame
+                onFirstFrame      = ::onFirstFrame,
+                onMode            = ::onStreamMode
             )
             tcpReceiver?.start()
         } else {
@@ -199,7 +200,8 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
                 onWindowsSize     = ::onWindowsSizeKnown,
                 onCursorPos       = ::onWindowsCursorPos,
                 onCodecConfigured = ::onCodecConfigured,
-                onFirstFrame      = ::onFirstFrame
+                onFirstFrame      = ::onFirstFrame,
+                onMode            = ::onStreamMode
             )
             receiver?.start()
         }
@@ -227,6 +229,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         touchSender?.close(); touchSender = null
         videoW = 0; videoH = 0; windowsW = 0; windowsH = 0
         binding.cursorOverlay.hide()
+        binding.tvExtendedBadge.visibility = View.GONE
         binding.btnConnect.text = "Connect"
         binding.btnKeyboard.isEnabled = false
         hideKeyboard()
@@ -273,6 +276,13 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     private fun onFirstFrame() {
         firstFrameHandler.removeCallbacks(firstFrameTimeoutRunnable)
         runOnUiThread { binding.videoLoadingCover.visibility = View.GONE }
+    }
+
+    private fun onStreamMode(flags: Int) {
+        val extended = (flags and 1) != 0
+        runOnUiThread {
+            binding.tvExtendedBadge.visibility = if (extended) View.VISIBLE else View.GONE
+        }
     }
 
     private fun onCodecConfigured() {

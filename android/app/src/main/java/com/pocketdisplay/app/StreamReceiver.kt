@@ -16,7 +16,8 @@ class StreamReceiver(
     private val onWindowsSize: ((Int, Int) -> Unit)? = null,
     private val onCursorPos: ((Float, Float, Int) -> Unit)? = null,
     onCodecConfigured: (() -> Unit)? = null,
-    onFirstFrame: (() -> Unit)? = null
+    onFirstFrame: (() -> Unit)? = null,
+    private val onMode: ((Int) -> Unit)? = null
 ) {
     companion object {
         const val PORT             = 7777
@@ -96,6 +97,7 @@ class StreamReceiver(
                 val infoBuf = ByteBuffer.wrap(payload).order(ByteOrder.BIG_ENDIAN)
                 val w = infoBuf.int; val h = infoBuf.int
                 if (w > 0 && h > 0) onWindowsSize?.invoke(w, h)
+                if (payloadLen >= 12) onMode?.invoke(infoBuf.int)
             }
             return
         }

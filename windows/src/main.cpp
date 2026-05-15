@@ -44,16 +44,58 @@ static void PrintBanner() {
 static void PrintUsage(const char* exe) {
     std::cout << "Usage:\n";
     SetColor(YELLOW);
-    std::cout << "  WiFi: " << exe << " <android_ip> [port] [bitrate_kbps] [fps] [--hw]\n";
-    std::cout << "  USB:  " << exe << " --usb [--hw]\n";
+    std::cout << "  WiFi: " << exe << " <android_ip> [port] [bitrate_kbps] [fps] [--hw] [--extend | --monitor=N]\n";
+    std::cout << "  USB:  " << exe << " --usb [--hw] [--extend | --monitor=N]\n";
     ResetColor();
     std::cout << "\nOptions:\n"
-              << "  --usb    USB mode: adb reverse + TCP video server (device connects to PC)\n"
-              << "  --hw     Hardware encoder (NVENC/Intel/AMD — falls back to x264)\n"
+              << "  --usb        USB mode: adb reverse + TCP video server (device connects to PC)\n"
+              << "  --hw         Hardware encoder (NVENC/Intel/AMD — falls back to x264)\n"
+              << "  --extend     Capture last DXGI output (virtual/extended display)\n"
+              << "  --monitor=N  Capture monitor N (1-based index, e.g. --monitor=2)\n"
               << "\nExamples:\n"
               << "  " << exe << " 192.168.1.100\n"
               << "  " << exe << " 192.168.1.100 7777 8000 60 --hw\n"
-              << "  " << exe << " --usb --hw\n";
+              << "  " << exe << " --usb --hw\n"
+              << "  " << exe << " --usb --extend\n"
+              << "  " << exe << " --usb --monitor=2\n";
+}
+
+// ── DXGI output enumerator ────────────────────────────────────────────────────
+// Prints available monitors on adapter 0 and returns the output index to use.
+static int PickOutputIdx(bool extend, int monitor_num) {
+    using Microsoft::WRL::ComPtr;
+    ComPtr<ID3D11Device> dev;
+    if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
+                                  0, nullptr, 0, D3D11_SDK_VERSION,
+                                  &dev, nullptr, nullptr))) {
+        std::cerr << "      WARNING: Could not enumerate outputs, defaulting to 0\n";
+        return monitor_num > 0 ? std::max(0, monitor_num - 1) : 0;
+    }
+    ComPtr<IDXGIDevice> dxgi_dev;
+    dev.As(&dxgi_dev);
+    ComPtr<IDXGIAdapter> adapter;
+    dxgi_dev->GetAdapter(&adapter);
+
+    int last_idx = 0;
+    for (int i = 0; ; ++i) {
+        ComPtr<IDXGIOutput> out;
+        if (FAILED(adapter->EnumOutputs(i, &out))) break;
+        DXGI_OUTPUT_DESC d = {};
+        out->GetDesc(&d);
+        char nm[64] = {};
+        WideCharToMultiByte(CP_UTF8, 0, d.DeviceName, -1, nm, sizeof(nm), nullptr, nullptr);
+        SetColor(GRAY);
+        std::cout << "      [" << (i + 1) << "] " << nm
+                  << "  " << (d.DesktopCoordinates.right  - d.DesktopCoordinates.left)
+                  << "x" << (d.DesktopCoordinates.bottom - d.DesktopCoordinates.top)
+                  << " @(" << d.DesktopCoordinates.left << "," << d.DesktopCoordinates.top << ")"
+                  << (d.AttachedToDesktop ? "" : "  [inactive]") << "\n";
+        ResetColor();
+        last_idx = i;
+    }
+    if (monitor_num > 0) return std::max(0, monitor_num - 1);
+    if (extend)          return last_idx;
+    return 0;
 }
 
 // ── Signal ──────────────────────────────────────────────────────────────────
@@ -135,6 +177,8 @@ int main(int argc, char* argv[]) {
 
     bool usb_mode     = false;
     bool hw_enc       = false;
+    bool extend_mode  = false;
+    int  monitor_num  = 0;       // 1-based (0 = default = primary)
     std::string target_ip;
     uint16_t port         = pocketdisplay::DEFAULT_PORT;
     uint16_t touch_port   = 7778;
@@ -144,15 +188,17 @@ int main(int argc, char* argv[]) {
     // Parse arguments
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if (arg == "--usb")  { usb_mode = true; }
-        else if (arg == "--hw") { hw_enc = true; }
+        if      (arg == "--usb")    { usb_mode    = true; }
+        else if (arg == "--hw")     { hw_enc      = true; }
+        else if (arg == "--extend") { extend_mode = true; }
+        else if (arg.rfind("--monitor=", 0) == 0) { monitor_num = std::stoi(arg.substr(10)); }
         else if (arg == "--help" || arg == "-h") { PrintUsage(argv[0]); return 0; }
-        else if (arg == "--port"  && i+1 < argc) port         = static_cast<uint16_t>(std::stoi(argv[++i]));
-        else if (arg == "--fps"   && i+1 < argc) target_fps   = std::stoi(argv[++i]);
+        else if (arg == "--port"    && i+1 < argc) port         = static_cast<uint16_t>(std::stoi(argv[++i]));
+        else if (arg == "--fps"     && i+1 < argc) target_fps   = std::stoi(argv[++i]);
         else if (arg == "--bitrate" && i+1 < argc) bitrate_kbps = std::stoi(argv[++i]);
         else if (arg[0] != '-' && target_ip.empty()) target_ip = arg;
         // Legacy positional: ip port bitrate fps
-        else if (arg[0] != '-' && target_ip.empty() == false) {
+        else if (arg[0] != '-' && !target_ip.empty()) {
             if (port == pocketdisplay::DEFAULT_PORT) port = static_cast<uint16_t>(std::stoi(arg));
             else if (bitrate_kbps == 8000)           bitrate_kbps = std::stoi(arg);
             else if (target_fps == 60)               target_fps   = std::stoi(arg);
@@ -165,25 +211,37 @@ int main(int argc, char* argv[]) {
     }
     if (usb_mode) target_ip = "127.0.0.1";
 
+    const bool extended = extend_mode || monitor_num > 0;
+
     std::signal(SIGINT, SignalHandler);
 
-    const char* mode_name = usb_mode ? "USB" : "WiFi";
+    const char* mode_name = usb_mode ? (extended ? "USB/EXT"  : "USB")
+                                     : (extended ? "WiFi/EXT" : "WiFi");
     const char* enc_name  = hw_enc   ? "HW"  : "x264";
 
     // ── Screen capture ───────────────────────────────────────────────────────
 
     SetColor(CYAN);
     std::cout << "[1/4] Screen capture...\n";
+    int output_idx = 0;
+    if (extended) {
+        std::cout << "      Available monitors (adapter 0):\n";
+        output_idx = PickOutputIdx(extend_mode, monitor_num);
+    }
     ResetColor();
+
     ScreenCapture capture;
-    if (!capture.Initialize()) {
+    if (!capture.Initialize(0, output_idx)) {
         SetColor(RED);
-        std::cerr << "  ERROR: DXGI Desktop Duplication failed.\n";
+        std::cerr << "  ERROR: DXGI Desktop Duplication failed (monitor " << (output_idx + 1) << ").\n";
         ResetColor();
         return 1;
     }
     SetColor(GREEN);
-    std::cout << "      Display: " << capture.GetWidth() << "x" << capture.GetHeight() << "\n";
+    std::cout << "      Display [" << (output_idx + 1) << "]: "
+              << capture.GetWidth() << "x" << capture.GetHeight();
+    if (extended) std::cout << "  (extended mode)";
+    std::cout << "\n";
     ResetColor();
 
     // ── Encoder ─────────────────────────────────────────────────────────────
@@ -286,6 +344,7 @@ int main(int argc, char* argv[]) {
         std::cout << "      WARNING: Could not start touch receiver (non-fatal)\n";
         ResetColor();
     }
+    if (extended) touch.SetExtendedMonitor(capture.GetMonitorRect());
 
     // ── Codec config resend thread ────────────────────────────────────────────
     // Resends FLAG_STREAM_INFO + FLAG_CODEC_CONFIG every 1.5 s until Android
@@ -308,12 +367,16 @@ int main(int argc, char* argv[]) {
         while (g_running) {
             // Stream dimensions — static for session lifetime; send only once.
             if (!dims_sent) {
-                uint8_t dims[8];
-                uint32_t sw = htonl(static_cast<uint32_t>(cap_w));
-                uint32_t sh = htonl(static_cast<uint32_t>(cap_h));
+                // 12-byte stream info: width(4) + height(4) + flags(4)
+                // flags bit 0: extended display mode
+                uint8_t dims[12];
+                const uint32_t sw = htonl(static_cast<uint32_t>(cap_w));
+                const uint32_t sh = htonl(static_cast<uint32_t>(cap_h));
+                const uint32_t sf = htonl(extended ? 1u : 0u);
                 std::memcpy(dims,     &sw, 4);
                 std::memcpy(dims + 4, &sh, 4);
-                streamer->SendFrame(dims, 8, 0, pocketdisplay::FLAG_STREAM_INFO);
+                std::memcpy(dims + 8, &sf, 4);
+                streamer->SendFrame(dims, 12, 0, pocketdisplay::FLAG_STREAM_INFO);
                 dims_sent = true;
             }
 
@@ -335,8 +398,10 @@ int main(int argc, char* argv[]) {
 
     // ── Cursor position + type thread (60 Hz) ────────────────────────────────
 
-    const int screen_w = GetSystemMetrics(SM_CXSCREEN);
-    const int screen_h = GetSystemMetrics(SM_CYSCREEN);
+    const int  screen_w = GetSystemMetrics(SM_CXSCREEN);
+    const int  screen_h = GetSystemMetrics(SM_CYSCREEN);
+    const RECT mon_rect = extended ? capture.GetMonitorRect()
+                                   : RECT{0, 0, screen_w, screen_h};
     std::thread cursor_thread([&]() {
         // Preload shared system cursor handles once for fast comparison.
         const HCURSOR c_ibeam    = LoadCursor(NULL, IDC_IBEAM);
@@ -384,16 +449,31 @@ int main(int argc, char* argv[]) {
                 if (pos_changed)  last_pos  = pos;
                 if (type_changed) last_type = cur_type;
 
-                float nx = static_cast<float>(last_pos.x) / screen_w;
-                float ny = static_cast<float>(last_pos.y) / screen_h;
-                uint32_t nx_be, ny_be;
-                std::memcpy(&nx_be, &nx, 4); nx_be = htonl(nx_be);
-                std::memcpy(&ny_be, &ny, 4); ny_be = htonl(ny_be);
-                uint8_t payload[9];
-                std::memcpy(payload,     &nx_be, 4);
-                std::memcpy(payload + 4, &ny_be, 4);
-                payload[8] = last_type;
-                streamer->SendFrame(payload, 9, 0, pocketdisplay::FLAG_CURSOR_POS);
+                float nx, ny;
+                if (extended) {
+                    const bool on_mon =
+                        last_pos.x >= mon_rect.left && last_pos.x < mon_rect.right &&
+                        last_pos.y >= mon_rect.top  && last_pos.y < mon_rect.bottom;
+                    if (!on_mon) goto cursor_sleep;
+                    const int mw = mon_rect.right  - mon_rect.left;
+                    const int mh = mon_rect.bottom - mon_rect.top;
+                    nx = static_cast<float>(last_pos.x - mon_rect.left) / mw;
+                    ny = static_cast<float>(last_pos.y - mon_rect.top)  / mh;
+                } else {
+                    nx = static_cast<float>(last_pos.x) / screen_w;
+                    ny = static_cast<float>(last_pos.y) / screen_h;
+                }
+                {
+                    uint32_t nx_be, ny_be;
+                    std::memcpy(&nx_be, &nx, 4); nx_be = htonl(nx_be);
+                    std::memcpy(&ny_be, &ny, 4); ny_be = htonl(ny_be);
+                    uint8_t payload[9];
+                    std::memcpy(payload,     &nx_be, 4);
+                    std::memcpy(payload + 4, &ny_be, 4);
+                    payload[8] = last_type;
+                    streamer->SendFrame(payload, 9, 0, pocketdisplay::FLAG_CURSOR_POS);
+                }
+                cursor_sleep:;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(16));
         }
