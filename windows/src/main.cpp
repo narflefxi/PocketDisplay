@@ -17,6 +17,7 @@
 #include <csignal>
 #include <cstring>
 #include <cstdio>
+#include <future>
 #include <iomanip>
 
 // ── Console color helpers ───────────────────────────────────────────────────
@@ -210,7 +211,8 @@ static bool DetectUsbDevice() {
 
 // Broadcasts POCKETDISPLAY_HOST on LAN:7779 every 2 s and waits for an
 // Android POCKETDISPLAY_CLIENT reply. Returns the Android IP or "".
-static std::string DiscoverAndroidIp(const std::string& local_ip, uint16_t video_port) {
+static std::string DiscoverAndroidIp(const std::string& local_ip, uint16_t video_port,
+                                      bool verbose = true) {
     SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock == INVALID_SOCKET) return "";
 
@@ -238,11 +240,13 @@ static std::string DiscoverAndroidIp(const std::string& local_ip, uint16_t video
     const std::string announce =
         std::string("POCKETDISPLAY_HOST:") + local_ip + ":" + std::to_string(video_port);
 
-    SetColor(CYAN);
-    std::cout << "      Local IP : " << local_ip << "\n";
-    std::cout << "      Waiting  : open PocketDisplay on Android (broadcasting on :"
-              << DISC_PORT << ")...\n";
-    ResetColor();
+    if (verbose) {
+        SetColor(CYAN);
+        std::cout << "      Local IP : " << local_ip << "\n";
+        std::cout << "      Waiting  : open PocketDisplay on Android (broadcasting on :"
+                  << DISC_PORT << ")...\n";
+        ResetColor();
+    }
 
     auto last_bcast = std::chrono::steady_clock::now() - std::chrono::seconds(3);
     while (g_running) {
@@ -264,9 +268,6 @@ static std::string DiscoverAndroidIp(const std::string& local_ip, uint16_t video
             if (resp.rfind("POCKETDISPLAY_CLIENT:", 0) == 0) {
                 const std::string client_ip = resp.substr(21);
                 closesocket(sock);
-                SetColor(GREEN);
-                std::cout << "      Android found : " << client_ip << "\n";
-                ResetColor();
                 return client_ip;
             }
         }
@@ -392,6 +393,22 @@ int main(int argc, char* argv[]) {
             auto_discover = true;
         }
     }
+
+    // Start broadcasting presence immediately so Android can connect while setup runs.
+    std::future<std::string> disc_future;
+    if (auto_discover) {
+        const std::string local_ip_early = GetLocalIp();
+        SetColor(CYAN);
+        std::cout << "  Broadcasting presence on :" << DISC_PORT
+                  << " \u2014 waiting for Android (open PocketDisplay app)...\n";
+        std::cout << "  Local IP : " << local_ip_early << "\n";
+        ResetColor();
+        disc_future = std::async(std::launch::async,
+            [local_ip_early, port]() {
+                return DiscoverAndroidIp(local_ip_early, port, false);
+            });
+    }
+
     if (usb_mode) target_ip = "127.0.0.1";
 
     const bool extended = extend_mode || monitor_num > 0;
@@ -469,10 +486,11 @@ int main(int argc, char* argv[]) {
     std::cout << "\n";
     ResetColor();
 
-    // WiFi auto-discovery — blocks until Android responds or Ctrl+C.
+    // WiFi auto-discovery — wait for background broadcast thread result.
     if (auto_discover) {
-        target_ip = DiscoverAndroidIp(GetLocalIp(), port);
+        disc_future.wait();
         if (!g_running) return 0;
+        target_ip = disc_future.get();
         if (target_ip.empty()) {
             SetColor(RED);
             std::cerr << "  ERROR: No Android device responded.\n"
@@ -480,6 +498,9 @@ int main(int argc, char* argv[]) {
             ResetColor();
             return 1;
         }
+        SetColor(GREEN);
+        std::cout << "      Android connected: " << target_ip << " \u2014 starting stream...\n";
+        ResetColor();
     }
 
     std::unique_ptr<IStreamer> streamer;

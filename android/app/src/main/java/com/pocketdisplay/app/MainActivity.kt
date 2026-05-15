@@ -34,6 +34,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     private var receiver: StreamReceiver? = null
     private var tcpReceiver: TcpStreamReceiver? = null
     private var discoverClient: DiscoveryClient? = null
+    @Volatile private var discoveredHostIp: String? = null
 
     @Volatile private var videoW = 0
     @Volatile private var videoH = 0
@@ -122,6 +123,9 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         binding.tvDeviceIp.text = "IP: ${getLocalIp()}"
         updateModeUi()
 
+        // Auto-start: discovery begins immediately (no surface needed for UDP listen).
+        if (!usbMode) startDiscovery()
+
         binding.btnModeWifi.setOnClickListener { setMode(false) }
         binding.btnModeUsb.setOnClickListener  { setMode(true)  }
         binding.btnConnect.setOnClickListener  { toggleReceiver() }
@@ -140,10 +144,17 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     // ── Mode toggle ──────────────────────────────────────────────────────────
 
     private fun setMode(usb: Boolean) {
+        if (usbMode == usb) return
         usbMode = usb
         getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit()
             .putString(PREF_MODE, if (usb) "usb" else "wifi").apply()
         updateModeUi()
+        if (!usb) {
+            discoveredHostIp = null
+            startDiscovery()
+        } else {
+            discoverClient?.stop(); discoverClient = null
+        }
     }
 
     private fun updateModeUi() {
@@ -192,13 +203,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
                 onMode            = ::onStreamMode
             )
             receiver?.start()
-
-            // Auto-discover the Windows host — responds with our IP so Windows can send video.
-            discoverClient?.stop()
-            discoverClient = DiscoveryClient { hostIp, _ ->
-                runOnUiThread { updateStatus("Host found: $hostIp \u2014 streaming\u2026") }
-            }
-            discoverClient?.start()
+            // Discovery is managed by startDiscovery() / stopReceiver(); don't recreate here.
         }
 
         binding.videoLoadingCover.visibility = View.VISIBLE
@@ -209,7 +214,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         binding.btnKeyboard.isEnabled = true
         setStatusDot(connected = false)
         updateStatus(if (usbMode) "USB: connecting to 127.0.0.1\u2026 (run PocketDisplay.exe --usb on PC)"
-                     else "Searching for PocketDisplay host\u2026")
+                     else "Streaming from ${discoveredHostIp ?: "unknown"}\u2026")
     }
 
     private fun stopReceiver() {
@@ -223,6 +228,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         tcpReceiver?.stop(); tcpReceiver = null
         touchSender?.close(); touchSender = null
         discoverClient?.stop(); discoverClient = null
+        discoveredHostIp = null
         videoW = 0; videoH = 0; windowsW = 0; windowsH = 0
         binding.cursorOverlay.hide()
         binding.tvExtendedBadge.visibility = View.GONE
@@ -548,13 +554,31 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
 
     override fun onResume() {
         super.onResume()
+        if (!usbMode) startDiscovery()          // restart if stopped
         if (binding.textureView.surfaceTexture != null) autoStartIfNeeded()
     }
 
+    /** Starts discovery (WiFi) or video receiver (USB) without requiring a button tap. */
     private fun autoStartIfNeeded() {
-        if (!usbMode && receiver?.isRunning != true && tcpReceiver?.isRunning != true) {
-            startReceiver()
+        if (receiver?.isRunning == true || tcpReceiver?.isRunning == true) return
+        if (binding.textureView.surfaceTexture == null) return
+        if (!usbMode && discoveredHostIp == null) return  // WiFi: wait for discovery first
+        startReceiver()
+    }
+
+    /** Begins UDP discovery: listens for Windows broadcasts and stores the host IP. */
+    private fun startDiscovery() {
+        if (discoverClient?.isRunning == true) return
+        discoverClient?.stop()
+        discoverClient = DiscoveryClient { hostIp, _ ->
+            discoveredHostIp = hostIp
+            runOnUiThread {
+                updateStatus("Host found: $hostIp \u2014 connecting\u2026")
+                autoStartIfNeeded()
+            }
         }
+        discoverClient?.start()
+        if (receiver?.isRunning != true) updateStatus("Searching for PocketDisplay host\u2026")
     }
 
     override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {
