@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PocketDisplay</string>
+    <string name="nav_dashboard">Dashboard</string>
+    <string name="nav_devices">Devices</string>
+    <string name="nav_settings">Settings</string>
+    <string name="action_connect">Connect</string>
+    <string name="action_disconnect">Disconnect</string>
+    <string name="mode_wifi">WiFi</string>
+    <string name="mode_usb">USB</string>
+    <string name="status_searching">Searching for host…</string>
+    <string name="status_disconnected">Disconnected</string>
+</resources>

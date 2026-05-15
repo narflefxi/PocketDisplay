@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- PocketDisplay mascot: orange speech-bubble P with two eyes -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="100"
+    android:viewportHeight="100">
+
+    <!-- Orange speech-bubble body (rounded rect + tail) -->
+    <path
+        android:fillColor="#FF4500"
+        android:pathData="
+          M16,12
+          Q16,6 22,6
+          L78,6
+          Q84,6 84,12
+          L84,64
+          Q84,70 78,70
+          L50,70
+          L36,88
+          L40,70
+          L22,70
+          Q16,70 16,64
+          Z"/>
+
+    <!-- Left eye: white circle -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M41,37 m-11,0 a11,11 0 1,0 22,0 a11,11 0 1,0 -22,0"/>
+    <!-- Left pupil -->
+    <path
+        android:fillColor="#1A1A1A"
+        android:pathData="M43,37 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0"/>
+
+    <!-- Right eye: white circle -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M63,37 m-11,0 a11,11 0 1,0 22,0 a11,11 0 1,0 -22,0"/>
+    <!-- Right pupil -->
+    <path
+        android:fillColor="#1A1A1A"
+        android:pathData="M64,37 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0"/>
+</vector>

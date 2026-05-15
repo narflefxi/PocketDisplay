@@ -104,7 +104,9 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     private val statsRunnable = object : Runnable {
         override fun run() {
             if (receiver?.isRunning == true || tcpReceiver?.isRunning == true) {
-                binding.tvStats.text = "↓ ${framesDecoded / 5} fps"
+                val fps = "↓ ${framesDecoded / 5} fps"
+                binding.tvStats.text = fps
+                binding.hudStats.text = fps
                 framesDecoded = 0
             }
             statsHandler.postDelayed(this, 5000)
@@ -141,9 +143,10 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         binding.btnModeUsb.setOnClickListener  { setMode(true)  }
         binding.btnConnect.setOnClickListener  { toggleReceiver() }
         binding.btnKeyboard.setOnClickListener { toggleKeyboard() }
+        binding.hudDisconnect.setOnClickListener { stopReceiver() }
+        binding.hudKeyboard.setOnClickListener { toggleKeyboard() }
 
         binding.textureView.setOnTouchListener { _, event ->
-            // Single tap on video (outside HUD) → toggle HUD visibility
             handleTouch(event)
             true
         }
@@ -171,15 +174,30 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     }
 
     private fun updateModeUi() {
-        val alpha = 1f
-        binding.btnModeWifi.alpha = if (usbMode) 0.4f else alpha
-        binding.btnModeUsb.alpha  = if (usbMode) alpha else 0.4f
+        val activeColor  = 0x33FF4500.toInt()
+        val inactiveColor = android.graphics.Color.TRANSPARENT
+        binding.btnModeWifi.alpha = if (usbMode) 0.4f else 1f
+        binding.btnModeUsb.alpha  = if (usbMode) 1f else 0.4f
+        binding.btnModeWifi.setBackgroundColor(if (usbMode) inactiveColor else activeColor)
+        binding.btnModeUsb.setBackgroundColor(if (usbMode) activeColor else inactiveColor)
     }
 
     // ── Streaming control ────────────────────────────────────────────────────
 
     private fun toggleReceiver() {
         if (receiver?.isRunning == true || tcpReceiver?.isRunning == true) stopReceiver() else startReceiver()
+    }
+
+    private fun showHomeUi() {
+        binding.homePanel.visibility = View.VISIBLE
+        binding.streamHud.visibility = View.GONE
+    }
+
+    private fun showStreamingUi() {
+        binding.homePanel.visibility = View.GONE
+        binding.streamHud.visibility = View.GONE  // revealed on tap
+        binding.hudKeyboard.isEnabled = true
+        binding.hudIp.text = binding.tvDeviceIp.text
     }
 
     private fun startReceiver() {
@@ -226,6 +244,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
 
         binding.btnConnect.text = "Disconnect"
         binding.btnKeyboard.isEnabled = true
+        showStreamingUi()
         setStatusDot(connected = false)
         updateStatus(if (usbMode) "USB: connecting to 127.0.0.1\u2026 (run PocketDisplay.exe --usb on PC)"
                      else "Streaming from ${discoveredHostIp ?: "unknown"}\u2026")
@@ -251,6 +270,8 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         binding.tvExtendedBadge.visibility = View.GONE
         binding.btnConnect.text = "Connect"
         binding.btnKeyboard.isEnabled = false
+        binding.hudKeyboard.isEnabled = false
+        showHomeUi()
         hideKeyboard()
         setStatusDot(connected = false)
         updateStatus("Disconnected")
@@ -269,6 +290,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
             val senderIp = if (usbMode) "127.0.0.1" else ip
             touchSender = if (usbMode) TcpTouchSender(senderIp) else TouchSender(senderIp, useTcp = false)
             runOnUiThread {
+                binding.hudIp.text = if (usbMode) "USB" else ip
                 setStatusDot(connected = true)
                 updateStatus(if (usbMode) "Streaming via USB" else "Streaming via WiFi ↔ $ip")
             }
@@ -300,7 +322,9 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     private fun onStreamMode(flags: Int) {
         val extended = (flags and 1) != 0
         runOnUiThread {
-            binding.tvExtendedBadge.visibility = if (extended) View.VISIBLE else View.GONE
+            val vis = if (extended) View.VISIBLE else View.GONE
+            binding.tvExtendedBadge.visibility = vis
+            binding.hudExtBadge.visibility = vis
         }
     }
 
@@ -309,15 +333,17 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     }
 
     private fun updateStatus(msg: String) {
-        runOnUiThread { binding.tvStatus.text = msg }
+        runOnUiThread {
+            binding.tvStatus.text = msg
+            binding.hudStatus.text = msg
+        }
     }
 
     private fun setStatusDot(connected: Boolean) {
         runOnUiThread {
-            binding.statusDot.setBackgroundResource(
-                if (connected) R.drawable.dot_connected
-                else           R.drawable.dot_disconnected
-            )
+            val res = if (connected) R.drawable.dot_connected else R.drawable.dot_disconnected
+            binding.statusDot.setBackgroundResource(res)
+            binding.hudDot.setBackgroundResource(res)
         }
     }
 
@@ -433,9 +459,9 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
                     if (!longPressConsumed) {
                         val dx = event.x - touchDownX; val dy = event.y - touchDownY
                         if (dx*dx + dy*dy < TAP_SLOP_PX * TAP_SLOP_PX) {
-                            // Tap: toggle HUD
-                            binding.controlPanel.visibility =
-                                if (binding.controlPanel.visibility == View.VISIBLE) View.GONE
+                            // Tap: toggle streaming HUD
+                            binding.streamHud.visibility =
+                                if (binding.streamHud.visibility == View.VISIBLE) View.GONE
                                 else View.VISIBLE
                         }
                     }

@@ -6,6 +6,7 @@
 #include "AdbUsbSetup.h"
 #include "TouchReceiver.h"
 #include "Protocol.h"
+#include "GuiApp.h"
 
 #include <windows.h>
 #include <iostream>
@@ -391,6 +392,7 @@ struct TcpVideoServerWrap : IStreamer {
 int main(int argc, char* argv[]) {
     g_con = GetStdHandle(STD_OUTPUT_HANDLE);
     WSADATA wsa{}; WSAStartup(MAKEWORD(2, 2), &wsa);  // must be before RunDiscovery
+    GuiLaunch();  // spawn dashboard window
     PrintBanner();
 
     bool usb_mode     = false;
@@ -440,6 +442,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (usb_mode) target_ip = "127.0.0.1";
+    strncpy_s(g_gui.mode, usb_mode ? "USB" : (target_ip.empty() ? "WiFi (auto)" : "WiFi"), 31);
 
     std::signal(SIGINT, SignalHandler);
 
@@ -614,6 +617,8 @@ int main(int argc, char* argv[]) {
     std::atomic<bool> android_ready{false};
     touch.SetAckCallback([&]() {
         android_ready = true;
+        g_gui.connected.store(true);
+        strncpy_s(g_gui.statusMsg, "Android ready — streaming", 255);
         SetColor(GREEN);
         std::cout << "\n  Android ready — codec confirmed.\n";
         ResetColor();
@@ -621,6 +626,10 @@ int main(int argc, char* argv[]) {
 
     const int cap_w = capture.GetWidth();
     const int cap_h = capture.GetHeight();
+    g_gui.capW.store(cap_w);
+    g_gui.capH.store(cap_h);
+    g_gui.streaming.store(true);
+    strncpy_s(g_gui.statusMsg, "Waiting for Android…", 255);
 
     std::thread resend_thread([&]() {
         bool dims_sent = false;
@@ -778,12 +787,17 @@ int main(int argc, char* argv[]) {
             std::chrono::steady_clock::now() - start_time).count();
         if (elapsed_s >= 1.0 &&
             frames_sent % static_cast<uint64_t>(target_fps * 5) == 0) {
-            PrintStats(frames_sent / elapsed_s,
-                       bytes_sent * 8.0 / 1000.0 / elapsed_s,
+            const double cur_fps = frames_sent / elapsed_s;
+            g_gui.fps.store(static_cast<int>(cur_fps + 0.5));
+            g_gui.bitrateKbps.store(static_cast<int>(bytes_sent * 8.0 / 1000.0 / elapsed_s));
+            PrintStats(cur_fps, bytes_sent * 8.0 / 1000.0 / elapsed_s,
                        nal_buf.size(), enc_name, mode_name);
         }
     }
 
+    g_gui.streaming.store(false);
+    g_gui.connected.store(false);
+    strncpy_s(g_gui.statusMsg, "Stopped", 255);
     std::cout << "\n\n  Shutting down...\n";
     if (resend_thread.joinable()) resend_thread.join();
     if (cursor_thread.joinable()) cursor_thread.join();

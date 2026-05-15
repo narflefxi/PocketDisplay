@@ -9,6 +9,7 @@ find_library(X264_LIBRARY NAMES libx264 x264 REQUIRED)
 
 add_executable(PocketDisplay
     src/main.cpp
+    src/GuiApp.cpp
     src/ScreenCapture.cpp
     src/Encoder.cpp
     src/HwEncoder.cpp
@@ -16,9 +17,13 @@ add_executable(PocketDisplay
     src/TcpVideoServer.cpp
     src/AdbUsbSetup.cpp
     src/TouchReceiver.cpp
+    resources/resource.rc
 )
 
-target_include_directories(PocketDisplay PRIVATE src ${X264_INCLUDE_DIR})
+set_source_files_properties(resources/resource.rc PROPERTIES
+    COMPILE_FLAGS "/I\"${CMAKE_CURRENT_SOURCE_DIR}/resources\"")
+
+target_include_directories(PocketDisplay PRIVATE src resources ${X264_INCLUDE_DIR})
 
 target_link_libraries(PocketDisplay PRIVATE
     ${X264_LIBRARY}
@@ -31,7 +36,17 @@ target_link_libraries(PocketDisplay PRIVATE
     mfplat
     mfuuid
     ole32
+    user32
+    gdi32
+    windowscodecs
+    msimg32
 )
+
+add_custom_command(TARGET PocketDisplay POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/../assets/logo-text.png"
+        "$<TARGET_FILE_DIR:PocketDisplay>/logo-text.png"
+    COMMENT "Copying logo-text.png to output dir")
 
 target_compile_definitions(PocketDisplay PRIVATE
     WIN32_LEAN_AND_MEAN

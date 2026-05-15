@@ -4,9 +4,10 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#000000">
+    android:background="@color/colorStreamBg">
 
-    <!-- Full-screen video surface -->
+    <!-- ── Streaming layer ─────────────────────────────────────────────── -->
+
     <TextureView
         android:id="@+id/textureView"
         android:layout_width="0dp"
@@ -16,19 +17,17 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- Black cover shown until first valid frame is decoded; hides green surface glitch -->
     <View
         android:id="@+id/videoLoadingCover"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:background="#000000"
+        android:background="@color/colorStreamBg"
         android:visibility="gone"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- Cursor overlay — passes touches through -->
     <com.pocketdisplay.app.CursorOverlayView
         android:id="@+id/cursorOverlay"
         android:layout_width="0dp"
@@ -38,148 +37,446 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
-    <!-- HUD panel (tap anywhere to toggle) -->
+    <!-- ── Streaming HUD (tap to toggle; unique IDs — no overlap with homePanel) ── -->
     <LinearLayout
-        android:id="@+id/controlPanel"
+        android:id="@+id/streamHud"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="12dp"
-        android:background="#DD000000"
-        android:visibility="visible"
+        android:padding="10dp"
+        android:background="#CC000000"
+        android:visibility="gone"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        android:layout_margin="10dp">
+        android:layout_margin="8dp">
 
-        <!-- Device IP + stats row -->
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="center_vertical">
-
-            <TextView
-                android:id="@+id/tvDeviceIp"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="IP: detecting..."
-                android:textColor="#88FFFFFF"
-                android:textSize="10sp"
-                android:fontFamily="monospace" />
-
-            <TextView
-                android:id="@+id/tvStats"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text=""
-                android:textColor="#66FFFFFF"
-                android:textSize="10sp"
-                android:fontFamily="monospace"
-                android:layout_marginStart="12dp" />
-        </LinearLayout>
-
-        <!-- Status row -->
-        <LinearLayout
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:layout_marginTop="4dp">
-
             <View
-                android:id="@+id/statusDot"
+                android:id="@+id/hudDot"
                 android:layout_width="8dp"
                 android:layout_height="8dp"
                 android:background="@drawable/dot_disconnected" />
-
             <TextView
-                android:id="@+id/tvStatus"
+                android:id="@+id/hudStatus"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Disconnected"
                 android:textColor="#FFFFFF"
                 android:textSize="11sp"
                 android:layout_marginStart="6dp" />
-
             <TextView
-                android:id="@+id/tvExtendedBadge"
+                android:id="@+id/hudExtBadge"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="EXTENDED"
-                android:textColor="#000000"
+                android:text=" EXT "
+                android:textColor="#FFFFFF"
                 android:textSize="8sp"
-                android:fontFamily="monospace"
-                android:background="#FFD700"
+                android:background="#FF4500"
                 android:paddingStart="4dp"
                 android:paddingEnd="4dp"
-                android:paddingTop="1dp"
-                android:paddingBottom="1dp"
+                android:paddingTop="2dp"
+                android:paddingBottom="2dp"
                 android:layout_marginStart="8dp"
                 android:visibility="gone" />
         </LinearLayout>
 
-        <!-- Mode selector: WiFi / USB -->
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:layout_marginTop="8dp"
-            android:background="#33FFFFFF"
-            android:padding="2dp">
-
-            <Button
-                android:id="@+id/btnModeWifi"
+            android:gravity="center_vertical"
+            android:layout_marginTop="4dp">
+            <TextView
+                android:id="@+id/hudIp"
                 android:layout_width="wrap_content"
-                android:layout_height="32dp"
-                android:text="WiFi"
-                android:textSize="11sp"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                style="@style/Widget.AppCompat.Button.Borderless" />
-
-            <Button
-                android:id="@+id/btnModeUsb"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textColor="#88FFFFFF"
+                android:textSize="10sp"
+                android:fontFamily="monospace" />
+            <TextView
+                android:id="@+id/hudStats"
                 android:layout_width="wrap_content"
-                android:layout_height="32dp"
-                android:text="USB"
-                android:textSize="11sp"
-                android:paddingStart="12dp"
-                android:paddingEnd="12dp"
-                style="@style/Widget.AppCompat.Button.Borderless" />
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textColor="#66FFFFFF"
+                android:textSize="10sp"
+                android:fontFamily="monospace"
+                android:layout_marginStart="10dp" />
         </LinearLayout>
 
-
-        <!-- Action buttons -->
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:layout_marginTop="8dp">
-
             <Button
-                android:id="@+id/btnConnect"
+                android:id="@+id/hudDisconnect"
                 android:layout_width="wrap_content"
-                android:layout_height="36dp"
-                android:text="Connect"
-                android:textSize="12sp"
-                android:enabled="false"
-                android:paddingStart="16dp"
-                android:paddingEnd="16dp" />
-
+                android:layout_height="34dp"
+                android:text="Disconnect"
+                android:textSize="11sp"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                style="@style/Widget.PocketDisplay.Button.Primary" />
             <Button
-                android:id="@+id/btnKeyboard"
-                android:layout_width="36dp"
-                android:layout_height="36dp"
+                android:id="@+id/hudKeyboard"
+                android:layout_width="34dp"
+                android:layout_height="34dp"
                 android:text="⌨"
-                android:textSize="16sp"
+                android:textSize="15sp"
                 android:paddingStart="0dp"
                 android:paddingEnd="0dp"
                 android:layout_marginStart="6dp"
                 android:enabled="false"
-                android:visibility="visible" />
+                style="@style/Widget.AppCompat.Button.Borderless"
+                android:textColor="#FFFFFF" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- ── HOME PANEL — full-screen branded idle screen ─────────────── -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/homePanel"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="@color/colorBackground"
+        android:visibility="visible"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <!-- Left sidebar -->
+        <LinearLayout
+            android:id="@+id/sidebar"
+            android:layout_width="200dp"
+            android:layout_height="0dp"
+            android:orientation="vertical"
+            android:background="@color/colorSidebarBg"
+            android:paddingTop="24dp"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent">
+
+            <!-- Logo row -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingStart="20dp"
+                android:paddingEnd="16dp"
+                android:paddingBottom="24dp">
+                <ImageView
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:src="@drawable/ic_logo"
+                    android:scaleType="fitCenter" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="PocketDisplay"
+                    android:textColor="#FFFFFF"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:layout_marginStart="10dp" />
+            </LinearLayout>
+
+            <!-- Nav: Dashboard (active) -->
+            <LinearLayout
+                android:id="@+id/navDashboard"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingStart="20dp"
+                android:background="#33FF4500">
+                <View
+                    android:layout_width="3dp"
+                    android:layout_height="28dp"
+                    android:background="#FF4500"
+                    android:layout_marginEnd="14dp" />
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:src="@drawable/ic_nav_dashboard" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Dashboard"
+                    android:textColor="#FF4500"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:layout_marginStart="10dp" />
+            </LinearLayout>
+
+            <!-- Nav: Connection -->
+            <LinearLayout
+                android:id="@+id/navConnection"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingStart="37dp">
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:src="@drawable/ic_nav_devices" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Connection"
+                    android:textColor="#AAAAAA"
+                    android:textSize="13sp"
+                    android:layout_marginStart="10dp" />
+            </LinearLayout>
+
+            <!-- Nav: Settings -->
+            <LinearLayout
+                android:id="@+id/navSettings"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingStart="37dp">
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:src="@drawable/ic_nav_settings" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Settings"
+                    android:textColor="#AAAAAA"
+                    android:textSize="13sp"
+                    android:layout_marginStart="10dp" />
+            </LinearLayout>
+
+            <!-- Mode toggle at bottom of sidebar -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:gravity="bottom"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:paddingBottom="24dp">
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="CONNECTION MODE"
+                    android:textColor="#666666"
+                    android:textSize="10sp"
+                    android:letterSpacing="0.1"
+                    android:layout_marginBottom="8dp" />
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="36dp"
+                    android:orientation="horizontal"
+                    android:background="#2A2A2A">
+                    <Button
+                        android:id="@+id/btnModeWifi"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:text="WiFi"
+                        android:textSize="11sp"
+                        android:textColor="#FFFFFF"
+                        style="@style/Widget.AppCompat.Button.Borderless" />
+                    <Button
+                        android:id="@+id/btnModeUsb"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:text="USB"
+                        android:textSize="11sp"
+                        android:textColor="#FFFFFF"
+                        style="@style/Widget.AppCompat.Button.Borderless" />
+                </LinearLayout>
+            </LinearLayout>
         </LinearLayout>
 
-    </LinearLayout>
+        <!-- Main content area -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:orientation="vertical"
+            android:background="@color/colorBackground"
+            android:padding="24dp"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toEndOf="@id/sidebar"
+            app:layout_constraintEnd_toEndOf="parent">
+
+            <!-- Header -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="20dp">
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Dashboard"
+                    android:textColor="@color/colorDark"
+                    android:textSize="22sp"
+                    android:textStyle="bold" />
+                <TextView
+                    android:id="@+id/tvDeviceIp"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="IP: detecting…"
+                    android:textColor="@color/colorLight"
+                    android:textSize="11sp"
+                    android:fontFamily="monospace" />
+            </LinearLayout>
+
+            <!-- Status card -->
+            <androidx.cardview.widget.CardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:cardCornerRadius="12dp"
+                app:cardElevation="2dp"
+                app:cardBackgroundColor="@color/colorCardBg"
+                android:layout_marginBottom="16dp">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical">
+                            <View
+                                android:id="@+id/statusDot"
+                                android:layout_width="10dp"
+                                android:layout_height="10dp"
+                                android:background="@drawable/dot_disconnected" />
+                            <TextView
+                                android:id="@+id/tvStatus"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Disconnected"
+                                android:textColor="@color/colorDark"
+                                android:textSize="14sp"
+                                android:textStyle="bold"
+                                android:layout_marginStart="8dp" />
+                            <TextView
+                                android:id="@+id/tvExtendedBadge"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text=" EXTENDED "
+                                android:textColor="#FFFFFF"
+                                android:textSize="9sp"
+                                android:background="#FF4500"
+                                android:paddingStart="6dp"
+                                android:paddingEnd="6dp"
+                                android:paddingTop="2dp"
+                                android:paddingBottom="2dp"
+                                android:layout_marginStart="10dp"
+                                android:visibility="gone" />
+                        </LinearLayout>
+                        <TextView
+                            android:id="@+id/tvStats"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="—"
+                            android:textColor="@color/colorLight"
+                            android:textSize="12sp"
+                            android:fontFamily="monospace" />
+                    </LinearLayout>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- Quick actions -->
+            <androidx.cardview.widget.CardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:cardCornerRadius="12dp"
+                app:cardElevation="2dp"
+                app:cardBackgroundColor="@color/colorCardBg"
+                android:layout_marginBottom="16dp">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="QUICK ACTIONS"
+                        android:textColor="@color/colorLight"
+                        android:textSize="10sp"
+                        android:letterSpacing="0.12"
+                        android:layout_marginBottom="12dp" />
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+                        <Button
+                            android:id="@+id/btnKeyboard"
+                            android:layout_width="0dp"
+                            android:layout_height="40dp"
+                            android:layout_weight="1"
+                            android:text="⌨ Keyboard"
+                            android:textSize="11sp"
+                            android:enabled="false"
+                            style="@style/Widget.PocketDisplay.Button.Outline"
+                            android:layout_marginEnd="8dp" />
+                        <Button
+                            android:layout_width="0dp"
+                            android:layout_height="40dp"
+                            android:layout_weight="1"
+                            android:text="🖱 Mouse"
+                            android:textSize="11sp"
+                            android:enabled="false"
+                            style="@style/Widget.PocketDisplay.Button.Outline" />
+                    </LinearLayout>
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
+
+            <!-- Connect button -->
+            <Button
+                android:id="@+id/btnConnect"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="Connect"
+                android:textSize="14sp"
+                android:enabled="false"
+                style="@style/Widget.PocketDisplay.Button.Primary" />
+
+        </LinearLayout>
+
+        <!-- Bottom nav bar -->
+        <com.google.android.material.bottomnavigation.BottomNavigationView
+            android:id="@+id/bottomNav"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:background="@color/colorSurface"
+            app:menu="@menu/bottom_nav_menu"
+            app:itemIconTint="@color/colorPrimary"
+            app:itemTextColor="@color/colorPrimary"
+            android:visibility="gone"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent" />
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
 
     <!-- Hidden 1×1 EditText captures soft keyboard input -->
     <EditText
