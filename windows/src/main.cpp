@@ -386,61 +386,6 @@ struct TcpVideoServerWrap : IStreamer {
     void Close() override { s.Close(); }
 };
 
-// USB mode: forward TCP 7779 via adb reverse, accept one connection, read mode.
-static void WaitForUsbMode(bool& extend_out) {
-    system("adb reverse tcp:7779 tcp:7779 >NUL 2>&1");
-
-    SOCKET srv = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (srv == INVALID_SOCKET) return;
-
-    BOOL reuse = TRUE;
-    setsockopt(srv, SOL_SOCKET, SO_REUSEADDR,
-               reinterpret_cast<char*>(&reuse), sizeof(reuse));
-
-    sockaddr_in sa{};
-    sa.sin_family      = AF_INET;
-    sa.sin_port        = htons(7779);
-    sa.sin_addr.s_addr = INADDR_ANY;
-
-    if (bind(srv, reinterpret_cast<sockaddr*>(&sa), sizeof(sa)) != 0 ||
-        listen(srv, 1) != 0) {
-        closesocket(srv); return;
-    }
-
-    SetColor(CYAN);
-    std::cout << "  Waiting for display mode selection on Android (30 s \u2192 Mirror)...\n";
-    ResetColor();
-
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-    SOCKET client = INVALID_SOCKET;
-
-    while (g_running && std::chrono::steady_clock::now() < deadline) {
-        fd_set fds; FD_ZERO(&fds); FD_SET(srv, &fds);
-        timeval tv{0, 200000};  // 200 ms poll
-        if (select(0, &fds, nullptr, nullptr, &tv) > 0) {
-            client = accept(srv, nullptr, nullptr);
-            break;
-        }
-    }
-    closesocket(srv);
-    if (client == INVALID_SOCKET) return;  // timeout → Mirror default
-
-    char buf[256]{};
-    const int n = recv(client, buf, static_cast<int>(sizeof(buf)) - 1, 0);
-    closesocket(client);
-    if (n <= 0) return;
-
-    std::string msg(buf, n);
-    while (!msg.empty() && (msg.back() == '\r' || msg.back() == '\n')) msg.pop_back();
-    if (msg.rfind("POCKETDISPLAY_MODE:", 0) == 0) {
-        const std::string mode = msg.substr(19);
-        extend_out = (mode == "extend");
-        SetColor(GREEN);
-        std::cout << "  Mode: " << (extend_out ? "Extended" : "Mirror") << "\n";
-        ResetColor();
-    }
-}
-
 // ── main ─────────────────────────────────────────────────────────────────────
 
 int main(int argc, char* argv[]) {
@@ -513,10 +458,38 @@ int main(int argc, char* argv[]) {
         extend_mode = disc.extend;
     }
 
-    // USB mode: wait for mode selection before starting capture.
+    // USB mode: run adb reverse, start TCP video server, then wait for Android to
+    // connect and send mode — all on the SAME persistent socket used for streaming.
+    std::unique_ptr<TcpVideoServerWrap> usb_server;
     if (usb_mode) {
-        WaitForUsbMode(extend_mode);
+        SetColor(CYAN);
+        std::cout << "[USB] Configuring adb reverse (tcp:" << port
+                  << ", tcp:" << touch_port << ")...\n";
+        ResetColor();
+        if (const std::string e = RunAdbUsbReverse(port, touch_port); !e.empty()) {
+            SetColor(RED); std::cerr << "  ERROR: " << e << "\n"; ResetColor();
+            return 1;
+        }
+        SetColor(GREEN); std::cout << "[USB] adb reverse OK.\n"; ResetColor();
+
+        usb_server = std::make_unique<TcpVideoServerWrap>();
+        if (!usb_server->Initialize("", port)) {
+            SetColor(RED);
+            std::cerr << "  ERROR: USB TCP listen failed on port " << port << ".\n";
+            ResetColor();
+            return 1;
+        }
+
+        SetColor(CYAN);
+        std::cout << "[USB] Waiting for Android to connect and select mode "
+                     "(120 s \u2192 Mirror)...\n";
+        ResetColor();
+        usb_server->s.WaitForMode(120000, extend_mode);
         if (!g_running) return 0;
+
+        SetColor(GREEN);
+        std::cout << "[USB] Mode: " << (extend_mode ? "Extended" : "Mirror") << "\n";
+        ResetColor();
     }
 
     const bool extended = extend_mode || monitor_num > 0;
@@ -594,27 +567,8 @@ int main(int argc, char* argv[]) {
 
     std::unique_ptr<IStreamer> streamer;
     if (usb_mode) {
-        SetColor(CYAN);
-        std::cout << "      USB: configuring adb reverse (tcp:" << port << ", tcp:" << touch_port << ")...\n";
-        ResetColor();
-        if (const std::string adb_err = RunAdbUsbReverse(port, touch_port); !adb_err.empty()) {
-            SetColor(RED);
-            std::cerr << "  ERROR: " << adb_err << "\n";
-            ResetColor();
-            return 1;
-        }
-        SetColor(GREEN);
-        std::cout << "      USB: adb reverse OK.\n";
-        ResetColor();
-
-        auto srv = std::make_unique<TcpVideoServerWrap>();
-        if (!srv->Initialize("", port)) {
-            SetColor(RED);
-            std::cerr << "  ERROR: USB TCP video listen failed on port " << port << ".\n";
-            ResetColor();
-            return 1;
-        }
-        streamer = std::move(srv);
+        // Server was already started during early USB init; just take ownership.
+        streamer = std::move(usb_server);
     } else {
         auto udp = std::make_unique<UdpStreamerWrap>();
         if (!udp->Initialize(target_ip, port)) {
@@ -627,8 +581,8 @@ int main(int argc, char* argv[]) {
     }
     SetColor(GREEN);
     if (usb_mode)
-        std::cout << "      USB: TCP video server ready on :" << port
-                  << " — start Android app (USB) to connect.\n";
+        std::cout << "      USB: Android connected on :" << port
+                  << " \u2014 starting stream.\n";
     else
         std::cout << "      UDP sender ready.\n";
     ResetColor();

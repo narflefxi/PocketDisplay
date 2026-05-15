@@ -29,7 +29,8 @@ class TcpStreamReceiver(
     private val onCursorPos: ((Float, Float, Int) -> Unit)? = null,
     onCodecConfigured: (() -> Unit)? = null,
     onFirstFrame: (() -> Unit)? = null,
-    private val onMode: ((Int) -> Unit)? = null
+    private val onMode: ((Int) -> Unit)? = null,
+    private val modeToSend: String? = null
 ) {
     companion object {
         private const val TAG = "PocketDisplay"
@@ -66,6 +67,14 @@ class TcpStreamReceiver(
                 activeSocket = socket
                 Log.i(TAG, "TCP connected to $HOST:$port")
                 onSenderIp?.invoke(HOST)
+
+                // Send mode selection as first message so Windows reads it before streaming.
+                if (modeToSend != null) {
+                    Log.i(TAG, "Sending mode to Windows: $modeToSend")
+                    socket.getOutputStream().write("POCKETDISPLAY_MODE:$modeToSend\n".toByteArray(Charsets.US_ASCII))
+                    socket.getOutputStream().flush()
+                    Log.i(TAG, "Mode sent OK")
+                }
 
                 val input = DataInputStream(socket.getInputStream())
                 val lenBuf = ByteArray(4)

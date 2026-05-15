@@ -39,6 +39,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     @Volatile private var discoveredHostIp: String? = null
     @Volatile private var modeSelected: Boolean = false
     @Volatile private var modeDialogShowing: Boolean = false
+    @Volatile private var selectedMode: String = "mirror"
 
     private var multicastLock: WifiManager.MulticastLock? = null
 
@@ -199,7 +200,8 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
                 onCursorPos       = ::onWindowsCursorPos,
                 onCodecConfigured = ::onCodecConfigured,
                 onFirstFrame      = ::onFirstFrame,
-                onMode            = ::onStreamMode
+                onMode            = ::onStreamMode,
+                modeToSend        = selectedMode
             )
             tcpReceiver?.start()
         } else {
@@ -243,6 +245,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         discoveredHostIp = null
         modeSelected = false
         modeDialogShowing = false
+        selectedMode = "mirror"
         videoW = 0; videoH = 0; windowsW = 0; windowsH = 0
         binding.cursorOverlay.hide()
         binding.tvExtendedBadge.visibility = View.GONE
@@ -607,36 +610,33 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
             .setMessage("$label\n\nHow should Windows share its screen?")
             .setPositiveButton("Mirror") { _, _ ->
                 modeDialogShowing = false
-                sendModeSelection(hostIp, "mirror")
+                if (usbMode) {
+                    selectedMode = "mirror"
+                    modeSelected = true
+                    autoStartIfNeeded()
+                } else {
+                    sendModeSelection(hostIp, "mirror")
+                }
             }
             .setNegativeButton("Extended") { _, _ ->
                 modeDialogShowing = false
-                sendModeSelection(hostIp, "extend")
+                if (usbMode) {
+                    selectedMode = "extend"
+                    modeSelected = true
+                    autoStartIfNeeded()
+                } else {
+                    sendModeSelection(hostIp, "extend")
+                }
             }
             .setCancelable(false)
             .show()
     }
 
-    /** Sends mode choice to Windows: UDP for WiFi, TCP for USB (via adb reverse 7779). */
+    /** Sends mode choice to Windows via UDP (WiFi only). USB sends mode over the video TCP socket. */
     private fun sendModeSelection(hostIp: String, mode: String) {
-        if (usbMode) {
-            Thread {
-                try {
-                    java.net.Socket(hostIp, 7779).use { s ->
-                        s.getOutputStream().write("POCKETDISPLAY_MODE:$mode\n".toByteArray())
-                        s.getOutputStream().flush()
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "sendMode USB error: ${e.message}")
-                }
-                modeSelected = true
-                runOnUiThread { autoStartIfNeeded() }
-            }.also { it.isDaemon = true; it.start() }
-        } else {
-            discoverClient?.sendMode(hostIp, mode)
-            modeSelected = true
-            autoStartIfNeeded()
-        }
+        discoverClient?.sendMode(hostIp, mode)
+        modeSelected = true
+        autoStartIfNeeded()
     }
 
     override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {

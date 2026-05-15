@@ -1,5 +1,6 @@
 #include "TcpVideoServer.h"
 
+#include <chrono>
 #include <cstring>
 #include <iostream>
 
@@ -88,12 +89,38 @@ void TcpVideoServer::AcceptLoop() {
         int buf_size = 4 * 1024 * 1024;
         setsockopt(c, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<const char*>(&buf_size), sizeof(buf_size));
 
+        // Read mode selection line before streaming begins.
+        {
+            DWORD rcvto = 5000;
+            setsockopt(c, SOL_SOCKET, SO_RCVTIMEO,
+                       reinterpret_cast<char*>(&rcvto), sizeof(rcvto));
+            std::string line;
+            char ch;
+            while (recv(c, &ch, 1, 0) == 1) {
+                if (ch == '\n') break;
+                if (ch != '\r') line += ch;
+                if (line.size() > 128) break;
+            }
+            DWORD zero = 0;
+            setsockopt(c, SOL_SOCKET, SO_RCVTIMEO,
+                       reinterpret_cast<char*>(&zero), sizeof(zero));
+
+            const int val = (line.rfind("POCKETDISPLAY_MODE:", 0) == 0 &&
+                             line.substr(19) == "extend") ? 1 : 0;
+            {
+                std::lock_guard<std::mutex> lk(mode_mu_);
+                if (mode_value_ < 0) mode_value_ = val;  // keep first
+            }
+            mode_cv_.notify_one();
+            std::cout << "  [USB/video] Android connected — mode="
+                      << (val == 1 ? "Extended" : "Mirror") << "\n";
+        }
+
         {
             std::lock_guard<std::mutex> lock(client_mu_);
             if (client_sock_ != INVALID_SOCKET) closesocket(client_sock_);
             client_sock_ = c;
         }
-        std::cout << "  [USB/video] Android connected (TCP)\n";
     }
 }
 
@@ -132,6 +159,19 @@ bool TcpVideoServer::SendFrame(const uint8_t* data, size_t size, uint32_t /*fram
     if (!SendAll(client_sock_, reinterpret_cast<const uint8_t*>(&be), 4)) return false;
     if (!SendAll(client_sock_, reinterpret_cast<const uint8_t*>(&t), 1)) return false;
     if (size > 0 && !SendAll(client_sock_, data, static_cast<int>(size))) return false;
+    return true;
+}
+
+bool TcpVideoServer::WaitForMode(int timeout_ms, bool& extend_out) {
+    std::unique_lock<std::mutex> lk(mode_mu_);
+    const bool got = mode_cv_.wait_for(
+        lk, std::chrono::milliseconds(timeout_ms),
+        [this] { return mode_value_ >= 0 || !running_; });
+    if (!got || mode_value_ < 0) {
+        extend_out = false;  // timeout → Mirror
+        return false;
+    }
+    extend_out = (mode_value_ == 1);
     return true;
 }
 
