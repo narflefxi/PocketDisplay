@@ -148,22 +148,6 @@
                 style="@style/Widget.AppCompat.Button.Borderless" />
         </LinearLayout>
 
-        <!-- IP input (WiFi mode only) -->
-        <EditText
-            android:id="@+id/etWindowsIp"
-            android:layout_width="180dp"
-            android:layout_height="36dp"
-            android:hint="Windows IP address"
-            android:textSize="12sp"
-            android:textColor="#FFFFFF"
-            android:textColorHint="#66FFFFFF"
-            android:inputType="textNoSuggestions"
-            android:imeOptions="actionDone"
-            android:background="#44FFFFFF"
-            android:paddingStart="8dp"
-            android:paddingEnd="8dp"
-            android:layout_marginTop="6dp"
-            android:fontFamily="monospace" />
 
         <!-- Action buttons -->
         <LinearLayout

@@ -17,7 +17,6 @@ import android.view.TextureView
 import android.view.View
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.pocketdisplay.app.databinding.ActivityMainBinding
 import java.net.Inet4Address
@@ -28,13 +27,13 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     companion object {
         private const val TAG = "PocketDisplay"
         private const val PREF_NAME = "pocketdisplay"
-        private const val PREF_IP   = "last_ip"
         private const val PREF_MODE = "mode"   // "wifi" | "usb"
     }
 
     private lateinit var binding: ActivityMainBinding
     private var receiver: StreamReceiver? = null
     private var tcpReceiver: TcpStreamReceiver? = null
+    private var discoverClient: DiscoveryClient? = null
 
     @Volatile private var videoW = 0
     @Volatile private var videoH = 0
@@ -115,10 +114,9 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Restore saved mode + IP
+        // Restore saved mode
         val prefs = getSharedPreferences(PREF_NAME, MODE_PRIVATE)
         usbMode = (prefs.getString(PREF_MODE, "wifi") == "usb")
-        binding.etWindowsIp.setText(prefs.getString(PREF_IP, ""))
 
         binding.textureView.surfaceTextureListener = this
         binding.tvDeviceIp.text = "IP: ${getLocalIp()}"
@@ -152,7 +150,6 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         val alpha = 1f
         binding.btnModeWifi.alpha = if (usbMode) 0.4f else alpha
         binding.btnModeUsb.alpha  = if (usbMode) alpha else 0.4f
-        binding.etWindowsIp.visibility = if (usbMode) View.GONE else View.VISIBLE
     }
 
     // ── Streaming control ────────────────────────────────────────────────────
@@ -166,15 +163,6 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         binding.textureView.alpha = 0f
         videoShowPending = true
         val st = binding.textureView.surfaceTexture ?: return
-
-        if (!usbMode) {
-            val ip = binding.etWindowsIp.text.toString().trim()
-            if (ip.isEmpty()) {
-                Toast.makeText(this, "Enter Windows IP address", Toast.LENGTH_SHORT).show()
-                return
-            }
-            getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit().putString(PREF_IP, ip).apply()
-        }
 
         val surface = Surface(st)
         if (usbMode) {
@@ -204,6 +192,13 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
                 onMode            = ::onStreamMode
             )
             receiver?.start()
+
+            // Auto-discover the Windows host — responds with our IP so Windows can send video.
+            discoverClient?.stop()
+            discoverClient = DiscoveryClient { hostIp, _ ->
+                runOnUiThread { updateStatus("Host found: $hostIp \u2014 streaming\u2026") }
+            }
+            discoverClient?.start()
         }
 
         binding.videoLoadingCover.visibility = View.VISIBLE
@@ -214,7 +209,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         binding.btnKeyboard.isEnabled = true
         setStatusDot(connected = false)
         updateStatus(if (usbMode) "USB: connecting to 127.0.0.1\u2026 (run PocketDisplay.exe --usb on PC)"
-                     else "Waiting for stream on :${StreamReceiver.PORT}\u2026")
+                     else "Searching for PocketDisplay host\u2026")
     }
 
     private fun stopReceiver() {
@@ -227,6 +222,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         receiver?.stop(); receiver = null
         tcpReceiver?.stop(); tcpReceiver = null
         touchSender?.close(); touchSender = null
+        discoverClient?.stop(); discoverClient = null
         videoW = 0; videoH = 0; windowsW = 0; windowsH = 0
         binding.cursorOverlay.hide()
         binding.tvExtendedBadge.visibility = View.GONE
@@ -545,7 +541,19 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
         runOnUiThread {
             binding.btnConnect.isEnabled = true
-            scheduleApplyFillTransform()   // retry now that the surface has real dimensions
+            scheduleApplyFillTransform()
+            autoStartIfNeeded()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (binding.textureView.surfaceTexture != null) autoStartIfNeeded()
+    }
+
+    private fun autoStartIfNeeded() {
+        if (!usbMode && receiver?.isRunning != true && tcpReceiver?.isRunning != true) {
+            startReceiver()
         }
     }
 
