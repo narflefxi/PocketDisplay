@@ -386,6 +386,61 @@ struct TcpVideoServerWrap : IStreamer {
     void Close() override { s.Close(); }
 };
 
+// USB mode: forward TCP 7779 via adb reverse, accept one connection, read mode.
+static void WaitForUsbMode(bool& extend_out) {
+    system("adb reverse tcp:7779 tcp:7779 >NUL 2>&1");
+
+    SOCKET srv = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (srv == INVALID_SOCKET) return;
+
+    BOOL reuse = TRUE;
+    setsockopt(srv, SOL_SOCKET, SO_REUSEADDR,
+               reinterpret_cast<char*>(&reuse), sizeof(reuse));
+
+    sockaddr_in sa{};
+    sa.sin_family      = AF_INET;
+    sa.sin_port        = htons(7779);
+    sa.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(srv, reinterpret_cast<sockaddr*>(&sa), sizeof(sa)) != 0 ||
+        listen(srv, 1) != 0) {
+        closesocket(srv); return;
+    }
+
+    SetColor(CYAN);
+    std::cout << "  Waiting for display mode selection on Android (30 s \u2192 Mirror)...\n";
+    ResetColor();
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    SOCKET client = INVALID_SOCKET;
+
+    while (g_running && std::chrono::steady_clock::now() < deadline) {
+        fd_set fds; FD_ZERO(&fds); FD_SET(srv, &fds);
+        timeval tv{0, 200000};  // 200 ms poll
+        if (select(0, &fds, nullptr, nullptr, &tv) > 0) {
+            client = accept(srv, nullptr, nullptr);
+            break;
+        }
+    }
+    closesocket(srv);
+    if (client == INVALID_SOCKET) return;  // timeout → Mirror default
+
+    char buf[256]{};
+    const int n = recv(client, buf, static_cast<int>(sizeof(buf)) - 1, 0);
+    closesocket(client);
+    if (n <= 0) return;
+
+    std::string msg(buf, n);
+    while (!msg.empty() && (msg.back() == '\r' || msg.back() == '\n')) msg.pop_back();
+    if (msg.rfind("POCKETDISPLAY_MODE:", 0) == 0) {
+        const std::string mode = msg.substr(19);
+        extend_out = (mode == "extend");
+        SetColor(GREEN);
+        std::cout << "  Mode: " << (extend_out ? "Extended" : "Mirror") << "\n";
+        ResetColor();
+    }
+}
+
 // ── main ─────────────────────────────────────────────────────────────────────
 
 int main(int argc, char* argv[]) {
@@ -456,6 +511,12 @@ int main(int argc, char* argv[]) {
         }
         target_ip   = disc.android_ip;
         extend_mode = disc.extend;
+    }
+
+    // USB mode: wait for mode selection before starting capture.
+    if (usb_mode) {
+        WaitForUsbMode(extend_mode);
+        if (!g_running) return 0;
     }
 
     const bool extended = extend_mode || monitor_num > 0;

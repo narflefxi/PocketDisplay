@@ -38,6 +38,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     private var discoverClient: DiscoveryClient? = null
     @Volatile private var discoveredHostIp: String? = null
     @Volatile private var modeSelected: Boolean = false
+    @Volatile private var modeDialogShowing: Boolean = false
 
     private var multicastLock: WifiManager.MulticastLock? = null
 
@@ -161,6 +162,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         if (!usb) {
             discoveredHostIp = null
             modeSelected = false
+            modeDialogShowing = false
             startDiscovery()
         } else {
             discoverClient?.stop(); discoverClient = null
@@ -240,6 +242,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         discoverClient?.stop(); discoverClient = null
         discoveredHostIp = null
         modeSelected = false
+        modeDialogShowing = false
         videoW = 0; videoH = 0; windowsW = 0; windowsH = 0
         binding.cursorOverlay.hide()
         binding.tvExtendedBadge.visibility = View.GONE
@@ -569,11 +572,16 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         if (binding.textureView.surfaceTexture != null) autoStartIfNeeded()
     }
 
-    /** Starts receiver once all conditions are met: surface ready + (USB OR host found + mode chosen). */
+    /** Starts receiver once all conditions are met: surface ready + mode chosen. */
     private fun autoStartIfNeeded() {
         if (receiver?.isRunning == true || tcpReceiver?.isRunning == true) return
         if (binding.textureView.surfaceTexture == null) return
-        if (!usbMode && (discoveredHostIp == null || !modeSelected)) return
+        if (!modeSelected) {
+            // USB: surface is ready — trigger mode dialog now (once)
+            if (usbMode && !modeDialogShowing) showModeDialog("127.0.0.1")
+            return
+        }
+        if (!usbMode && discoveredHostIp == null) return
         startReceiver()
     }
 
@@ -591,22 +599,44 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
 
     /** Shows Mirror / Extended dialog; on selection sends mode to Windows and starts receiver. */
     private fun showModeDialog(hostIp: String) {
-        updateStatus("Host found: $hostIp \u2014 select display mode")
+        modeDialogShowing = true
+        val label = if (usbMode) "USB device connected" else "Host found: $hostIp"
+        updateStatus("$label \u2014 select display mode")
         AlertDialog.Builder(this)
             .setTitle("Select Display Mode")
-            .setMessage("Connected to $hostIp\n\nHow should Windows share its screen?")
+            .setMessage("$label\n\nHow should Windows share its screen?")
             .setPositiveButton("Mirror") { _, _ ->
-                discoverClient?.sendMode(hostIp, "mirror")
-                modeSelected = true
-                autoStartIfNeeded()
+                modeDialogShowing = false
+                sendModeSelection(hostIp, "mirror")
             }
             .setNegativeButton("Extended") { _, _ ->
-                discoverClient?.sendMode(hostIp, "extend")
-                modeSelected = true
-                autoStartIfNeeded()
+                modeDialogShowing = false
+                sendModeSelection(hostIp, "extend")
             }
             .setCancelable(false)
             .show()
+    }
+
+    /** Sends mode choice to Windows: UDP for WiFi, TCP for USB (via adb reverse 7779). */
+    private fun sendModeSelection(hostIp: String, mode: String) {
+        if (usbMode) {
+            Thread {
+                try {
+                    java.net.Socket(hostIp, 7779).use { s ->
+                        s.getOutputStream().write("POCKETDISPLAY_MODE:$mode\n".toByteArray())
+                        s.getOutputStream().flush()
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "sendMode USB error: ${e.message}")
+                }
+                modeSelected = true
+                runOnUiThread { autoStartIfNeeded() }
+            }.also { it.isDaemon = true; it.start() }
+        } else {
+            discoverClient?.sendMode(hostIp, mode)
+            modeSelected = true
+            autoStartIfNeeded()
+        }
     }
 
     override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {
