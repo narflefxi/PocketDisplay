@@ -44,9 +44,16 @@ target_link_libraries(PocketDisplay PRIVATE
 
 add_custom_command(TARGET PocketDisplay POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_CURRENT_SOURCE_DIR}/../assets/logo-text.png"
-        "$<TARGET_FILE_DIR:PocketDisplay>/logo-text.png"
-    COMMENT "Copying logo-text.png to output dir")
+        "${CMAKE_CURRENT_SOURCE_DIR}/../assets/logo-primary.png"
+        "$<TARGET_FILE_DIR:PocketDisplay>/logo-primary.png"
+    COMMENT "Copying runtime assets to output dir")
+
+foreach(FONT Anton-Regular.ttf SpaceGrotesk-Medium.ttf SpaceGrotesk-Bold.ttf)
+    add_custom_command(TARGET PocketDisplay POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/../assets/${FONT}"
+            "$<TARGET_FILE_DIR:PocketDisplay>/${FONT}")
+endforeach()
 
 target_compile_definitions(PocketDisplay PRIVATE
     WIN32_LEAN_AND_MEAN

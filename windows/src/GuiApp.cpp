@@ -10,16 +10,16 @@
 GuiState g_gui;
 
 // ── Brand palette ─────────────────────────────────────────────────────────────
-static const COLORREF C_ORANGE   = RGB(0xFF, 0x45, 0x00);
-static const COLORREF C_DARK     = RGB(0x1A, 0x1A, 0x1A);
-static const COLORREF C_SIDEBAR  = RGB(0x22, 0x22, 0x22);
-static const COLORREF C_BG       = RGB(0xFA, 0xFA, 0xF8);
-static const COLORREF C_CARD     = RGB(0xFF, 0xFF, 0xFF);
-static const COLORREF C_TEXT     = RGB(0x1A, 0x1A, 0x1A);
+static const COLORREF C_ORANGE   = RGB(0xFF, 0x3B, 0x30);  // #FF3B30 primary/red
+static const COLORREF C_DARK     = RGB(0x0B, 0x0B, 0x0D);  // #0B0B0D near-black
+static const COLORREF C_SIDEBAR  = RGB(0x0B, 0x0B, 0x0D);  // #0B0B0D sidebar
+static const COLORREF C_BG       = RGB(0xFF, 0xF7, 0xEF);  // #FFF7EF background
+static const COLORREF C_CARD     = RGB(0xFF, 0xF7, 0xEF);  // #FFF7EF card fill
+static const COLORREF C_TEXT     = RGB(0x0B, 0x0B, 0x0D);  // #0B0B0D text
 static const COLORREF C_MUTED    = RGB(0x88, 0x88, 0x88);
 static const COLORREF C_GREEN    = RGB(0x22, 0xC5, 0x5E);
-static const COLORREF C_STATUSBR = RGB(0xF0, 0xF0, 0xEE);
-static const COLORREF C_DIVIDER  = RGB(0xE8, 0xE8, 0xE4);
+static const COLORREF C_STATUSBR = RGB(0xFF, 0xF7, 0xEF);  // #FFF7EF status bar
+static const COLORREF C_DIVIDER  = RGB(0xE5, 0xE5, 0xE5);
 
 static const int SIDEBAR_W = 200;
 static const int STATUSBAR_H = 34;
@@ -40,7 +40,7 @@ static void DrawText_(HDC dc, const wchar_t* t, int x, int y, int w, int h,
     RECT r{x, y, x+w, y+h};
     DrawTextW(dc, t, -1, &r, align);
 }
-static HFONT MakeFont(int pts, bool bold, const wchar_t* face = L"Segoe UI") {
+static HFONT MakeFont(int pts, bool bold, const wchar_t* face = L"Space Grotesk") {
     return CreateFontW(-pts, 0, 0, 0,
         bold ? FW_BOLD : FW_NORMAL,
         FALSE, FALSE, FALSE,
@@ -50,7 +50,7 @@ static HFONT MakeFont(int pts, bool bold, const wchar_t* face = L"Segoe UI") {
 }
 static void RoundRectFill(HDC dc, int x, int y, int w, int h, int r, COLORREF c) {
     HBRUSH br = CreateSolidBrush(c);
-    HPEN   pn = CreatePen(PS_NULL, 0, 0);
+    HPEN   pn = CreatePen(PS_SOLID, 1, C_DIVIDER);  // subtle 1px border
     auto   ob = SelectObject(dc, br);
     auto   op = SelectObject(dc, pn);
     RoundRect(dc, x, y, x+w, y+h, r, r);
@@ -192,13 +192,13 @@ static void PaintSidebar(HDC dc, int winH) {
 
     // Nav items
     int navStart = g_logoTextBmp ? (6 + g_logoTextH + 14) : 68;
-    HFONT fNav = MakeFont(12, false);
+    HFONT fNav = MakeFont(12, false, L"Space Grotesk");
     SelectObject(dc, fNav);
     for (int i = 0; i < 4; ++i) {
         int iy = navStart + i*44;
         bool active = (i == g_page);
         if (active) {
-            FillR(dc, 0, iy, SIDEBAR_W, 40, RGB(0xFF,0x45,0x00));  // orange highlight
+            FillR(dc, 0, iy, SIDEBAR_W, 40, C_ORANGE);              // red highlight
             FillR(dc, 0, iy, 3, 40, C_ORANGE);                     // left bar
         }
         DrawText_(dc, NAV[i].label, 22, iy, SIDEBAR_W-30, 40,
@@ -207,7 +207,7 @@ static void PaintSidebar(HDC dc, int winH) {
     DeleteObject(fNav);
 
     // Version at bottom
-    HFONT fSm = MakeFont(10, false);
+    HFONT fSm = MakeFont(10, false, L"Space Grotesk");
     SelectObject(dc, fSm);
     DrawText_(dc, L"v0.1.0", 16, h-24, SIDEBAR_W-32, 20, RGB(80,80,80));
     DeleteObject(fSm);
@@ -218,7 +218,7 @@ static void PaintStatusBar(HDC dc, int winW, int winH) {
     FillR(dc, 0, y, winW, STATUSBAR_H, C_STATUSBR);
     FillR(dc, 0, y, winW, 1, C_DIVIDER);  // top border
 
-    HFONT f = MakeFont(11, false);
+    HFONT f = MakeFont(11, false, L"Space Grotesk");
     SelectObject(dc, f);
 
     // PC name
@@ -242,14 +242,14 @@ static void PaintStatusBar(HDC dc, int winW, int winH) {
 
 static void PaintDashboard(HDC dc, int cx, int cy, int cw, int ch) {
     // Section title
-    HFONT fTitle = MakeFont(18, true);
+    HFONT fTitle = MakeFont(20, false, L"Anton");
     SelectObject(dc, fTitle);
     DrawText_(dc, L"Dashboard", cx+20, cy+18, cw-40, 32, C_TEXT);
     DeleteObject(fTitle);
 
-    HFONT fLabel = MakeFont(10, false);
-    HFONT fVal   = MakeFont(13, true);
-    HFONT fSm    = MakeFont(11, false);
+    HFONT fLabel = MakeFont(10, false, L"Space Grotesk");
+    HFONT fVal   = MakeFont(13, true,  L"Space Grotesk");
+    HFONT fSm    = MakeFont(11, false, L"Space Grotesk");
 
     // ── Status card ──────────────────────────────────────────────────
     int cardY = cy+62, cardH = 80;
@@ -328,11 +328,11 @@ static void PaintContent(HDC dc, int winW, int winH) {
     switch (g_page) {
     case 0: PaintDashboard(dc, cx, cy, cw, ch); break;
     case 1: {
-        HFONT f = MakeFont(16, true);
+        HFONT f = MakeFont(18, false, L"Anton");
         SelectObject(dc, f);
         DrawText_(dc, L"Connection", cx+20, cy+18, cw-40, 32, C_TEXT);
         DeleteObject(f);
-        HFONT fs = MakeFont(12, false);
+        HFONT fs = MakeFont(12, false, L"Space Grotesk");
         SelectObject(dc, fs);
         DrawText_(dc, L"USB mode: adb reverse tcp:7777 tcp:7777", cx+20, cy+70, cw-40, 24, C_MUTED);
         DrawText_(dc, L"WiFi mode: auto-discovery via UDP broadcast :7779", cx+20, cy+98, cw-40, 24, C_MUTED);
@@ -340,11 +340,11 @@ static void PaintContent(HDC dc, int winW, int winH) {
         break;
     }
     case 2: {
-        HFONT f = MakeFont(16, true);
+        HFONT f = MakeFont(18, false, L"Anton");
         SelectObject(dc, f);
         DrawText_(dc, L"Settings", cx+20, cy+18, cw-40, 32, C_TEXT);
         DeleteObject(f);
-        HFONT fs = MakeFont(12, false);
+        HFONT fs = MakeFont(12, false, L"Space Grotesk");
         SelectObject(dc, fs);
         DrawText_(dc, L"Mirror / Extended mode, bitrate and FPS are set via CLI flags.", cx+20, cy+70, cw-40, 24, C_MUTED);
         DrawText_(dc, L"Example:  PocketDisplay.exe --extend --bitrate=12000 --fps=60", cx+20, cy+98, cw-40, 24, C_MUTED);
@@ -352,11 +352,11 @@ static void PaintContent(HDC dc, int winW, int winH) {
         break;
     }
     case 3: {
-        HFONT f = MakeFont(16, true);
+        HFONT f = MakeFont(18, false, L"Anton");
         SelectObject(dc, f);
         DrawText_(dc, L"About PocketDisplay", cx+20, cy+18, cw-40, 32, C_TEXT);
         DeleteObject(f);
-        HFONT fs = MakeFont(12, false);
+        HFONT fs = MakeFont(12, false, L"Space Grotesk");
         SelectObject(dc, fs);
         DrawText_(dc, L"Version 0.1.0  ·  Use your Android phone as a wireless/USB display.", cx+20, cy+70, cw-40, 24, C_MUTED);
         DrawText_(dc, L"github.com/pocketdisplay", cx+20, cy+98, cw-40, 24, C_ORANGE);
@@ -437,14 +437,14 @@ static void GuiThread() {
 
     HINSTANCE hInst = GetModuleHandleW(nullptr);
 
-    // ── Load logo-text.png from exe directory ─────────────────────────────────
+    // ── Load logo-primary.png from exe directory ──────────────────────────────
     wchar_t exePath[MAX_PATH]{};
     GetModuleFileNameW(nullptr, exePath, MAX_PATH);
     wchar_t* lastSlash = wcsrchr(exePath, L'\\');
     if (lastSlash) { lastSlash[1] = L'\0'; }
     wchar_t imgPath[MAX_PATH]{};
     wcscpy_s(imgPath, exePath);
-    wcscat_s(imgPath, L"logo-text.png");
+    wcscat_s(imgPath, L"logo-primary.png");
 
     // Max 184 wide, 52 tall to fit the sidebar header area
     g_logoTextBmp = LoadPngHBitmap(imgPath, SIDEBAR_W - 16, 52);
@@ -453,6 +453,16 @@ static void GuiThread() {
         GetObject(g_logoTextBmp, sizeof(bm), &bm);
         g_logoTextW = bm.bmWidth;
         g_logoTextH = bm.bmHeight;
+    }
+
+    // ── Load custom fonts ─────────────────────────────────────────────────────
+    wchar_t fntPath[MAX_PATH]{};
+    for (const wchar_t* fname : {L"Anton-Regular.ttf",
+                                  L"SpaceGrotesk-Medium.ttf",
+                                  L"SpaceGrotesk-Bold.ttf"}) {
+        wcscpy_s(fntPath, exePath);
+        wcscat_s(fntPath, fname);
+        AddFontResourceExW(fntPath, FR_PRIVATE, nullptr);
     }
 
     // ── Register window class ─────────────────────────────────────────────────

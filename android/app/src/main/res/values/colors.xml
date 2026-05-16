@@ -1,18 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="colorPrimary">#FF4500</color>
-    <color name="colorPrimaryDark">#CC3700</color>
-    <color name="colorAccent">#FF4500</color>
-    <color name="colorBackground">#FAFAF8</color>
-    <color name="colorSurface">#FFFFFF</color>
-    <color name="colorDark">#1A1A1A</color>
+    <color name="colorPrimary">#FF3B30</color>
+    <color name="colorPrimaryDark">#CC2F26</color>
+    <color name="colorAccent">#FF3B30</color>
+    <color name="colorBackground">#FFF7EF</color>
+    <color name="colorSurface">#FFF7EF</color>
+    <color name="colorDark">#0B0B0D</color>
     <color name="colorMedium">#555555</color>
     <color name="colorLight">#888888</color>
-    <color name="colorDivider">#E8E8E4</color>
+    <color name="colorDivider">#E5E5E5</color>
     <color name="colorSuccess">#22C55E</color>
     <color name="colorError">#EF4444</color>
-    <color name="colorSidebarBg">#1A1A1A</color>
-    <color name="colorSidebarActive">#FF4500</color>
-    <color name="colorCardBg">#FFFFFF</color>
+    <color name="colorSidebarBg">#0B0B0D</color>
+    <color name="colorSidebarActive">#FF3B30</color>
+    <color name="colorCardBg">#FFF7EF</color>
     <color name="colorStreamBg">#000000</color>
 </resources>
