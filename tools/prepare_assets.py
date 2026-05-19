@@ -55,16 +55,23 @@ for folder, sz in LAUNCHER:
     out_dir = os.path.join(ANDROID_RES, folder)
     os.makedirs(out_dir, exist_ok=True)
 
-    pad      = max(4, sz // 12)
-    inner_sz = sz - pad * 2
+    # Fit logo to 72% of icon size, preserving aspect ratio, centered on BG.
+    # 72% keeps content clear of launcher mask shapes (circle/squircle clip).
+    max_logo = int(sz * 0.72)
+    src_w, src_h = logo.size
+    scale    = min(max_logo / src_w, max_logo / src_h)
+    logo_w   = int(src_w * scale)
+    logo_h   = int(src_h * scale)
+    off_x    = (sz - logo_w) // 2
+    off_y    = (sz - logo_h) // 2
     base     = Image.new("RGBA", (sz, sz), BG_COLOR)
-    scaled   = logo.resize((inner_sz, inner_sz), Image.LANCZOS)
-    base.paste(scaled, (pad, pad), scaled)
+    scaled   = logo.resize((logo_w, logo_h), Image.LANCZOS)
+    base.paste(scaled, (off_x, off_y), scaled)
     out      = base.convert("RGB")
 
     out.save(os.path.join(out_dir, "ic_launcher.png"))
     out.save(os.path.join(out_dir, "ic_launcher_round.png"))
-    print(f"  → {folder}/ic_launcher{{,_round}}.png  ({sz}×{sz})")
+    print(f"  → {folder}/ic_launcher{{,_round}}.png  ({sz}×{sz}, logo {logo_w}×{logo_h})")
 
 # ── Adaptive icon foreground PNGs ─────────────────────────────────────────────
 ADAPTIVE = [
@@ -78,13 +85,20 @@ ADAPTIVE = [
 for folder, canvas in ADAPTIVE:
     out_dir  = os.path.join(ANDROID_RES, folder)
     os.makedirs(out_dir, exist_ok=True)
-    logo_sz  = int(canvas * 0.80)
-    offset   = (canvas - logo_sz) // 2
+    # Safe zone = inner 66dp of 108dp canvas (61.1%). Use 56% to stay well clear.
+    # Preserve aspect ratio so the logo isn't distorted.
+    max_logo = int(canvas * 0.56)
+    src_w, src_h = logo.size
+    scale    = min(max_logo / src_w, max_logo / src_h)
+    logo_w   = int(src_w * scale)
+    logo_h   = int(src_h * scale)
+    off_x    = (canvas - logo_w) // 2
+    off_y    = (canvas - logo_h) // 2
     fg       = Image.new("RGBA", (canvas, canvas), (0, 0, 0, 0))
-    scaled   = logo.resize((logo_sz, logo_sz), Image.LANCZOS)
-    fg.paste(scaled, (offset, offset), scaled)
+    scaled   = logo.resize((logo_w, logo_h), Image.LANCZOS)
+    fg.paste(scaled, (off_x, off_y), scaled)
     fg.save(os.path.join(out_dir, "ic_launcher_foreground.png"))
-    print(f"  → {folder}/ic_launcher_foreground.png  ({canvas}×{canvas} canvas)")
+    print(f"  → {folder}/ic_launcher_foreground.png  ({canvas}×{canvas} canvas, logo {logo_w}×{logo_h})")
 
 # ── Android drawable PNGs ─────────────────────────────────────────────────────
 drawable_dir = os.path.join(ANDROID_RES, "drawable")
