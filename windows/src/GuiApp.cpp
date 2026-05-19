@@ -465,16 +465,36 @@ static void GuiThread() {
         AddFontResourceExW(fntPath, FR_PRIVATE, nullptr);
     }
 
-    // ── Register window class ─────────────────────────────────────────────────
-    HICON hIcon = LoadIconW(hInst, MAKEINTRESOURCEW(IDI_APPICON));
+    // ── Load icons (embedded resource → file fallback) ──────────────────────
+    // Load at explicit sizes for crisp taskbar (32px) and title bar (16px) icons.
+    wchar_t icoPath[MAX_PATH]{};
+    wcscpy_s(icoPath, exePath);
+    wcscat_s(icoPath, L"icon.ico");
 
+    auto LoadIconSz = [&](int sz) -> HICON {
+        // Try embedded resource first
+        HICON h = reinterpret_cast<HICON>(
+            LoadImageW(hInst, MAKEINTRESOURCEW(IDI_APPICON),
+                       IMAGE_ICON, sz, sz, LR_DEFAULTCOLOR));
+        if (!h) {
+            // Fallback: load from ico file next to exe
+            h = reinterpret_cast<HICON>(
+                LoadImageW(nullptr, icoPath,
+                           IMAGE_ICON, sz, sz, LR_LOADFROMFILE));
+        }
+        return h;
+    };
+    HICON hIconBig   = LoadIconSz(32);
+    HICON hIconSmall = LoadIconSz(16);
+
+    // ── Register window class ─────────────────────────────────────────────────
     WNDCLASSEXW wc{};
     wc.cbSize        = sizeof(wc);
     wc.style         = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc   = WndProc;
     wc.hInstance     = hInst;
-    wc.hIcon         = hIcon;
-    wc.hIconSm       = hIcon;
+    wc.hIcon         = hIconBig;
+    wc.hIconSm       = hIconSmall;
     wc.hCursor       = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
     wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     wc.lpszClassName = L"PocketDisplayGui";
@@ -492,9 +512,9 @@ static void GuiThread() {
 
     if (!g_hwnd) { CoUninitialize(); return; }
 
-    // Ensure taskbar + title bar also get the icon
-    SendMessageW(g_hwnd, WM_SETICON, ICON_BIG,   reinterpret_cast<LPARAM>(hIcon));
-    SendMessageW(g_hwnd, WM_SETICON, ICON_SMALL,  reinterpret_cast<LPARAM>(hIcon));
+    // Explicitly set taskbar icon (big) and title-bar icon (small)
+    SendMessageW(g_hwnd, WM_SETICON, ICON_BIG,   reinterpret_cast<LPARAM>(hIconBig));
+    SendMessageW(g_hwnd, WM_SETICON, ICON_SMALL,  reinterpret_cast<LPARAM>(hIconSmall));
 
     // Refresh every 1 second for live stats
     g_timer = SetTimer(g_hwnd, 1, 1000, nullptr);
