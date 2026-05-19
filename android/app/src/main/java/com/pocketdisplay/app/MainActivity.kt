@@ -142,7 +142,6 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         binding.btnModeWifi.setOnClickListener { setMode(false) }
         binding.btnModeUsb.setOnClickListener  { setMode(true)  }
         binding.btnConnect.setOnClickListener  { toggleReceiver() }
-        binding.btnKeyboard.setOnClickListener { toggleKeyboard() }
         binding.hudDisconnect.setOnClickListener { stopReceiver() }
         binding.hudKeyboard.setOnClickListener { toggleKeyboard() }
 
@@ -243,7 +242,6 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         firstFrameHandler.postDelayed(firstFrameTimeoutRunnable, 5000)
 
         binding.btnConnect.text = "Disconnect"
-        binding.btnKeyboard.isEnabled = true
         showStreamingUi()
         setStatusDot(connected = false)
         updateStatus(if (usbMode) "USB: connecting to 127.0.0.1\u2026 (run PocketDisplay.exe --usb on PC)"
@@ -269,7 +267,6 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         binding.cursorOverlay.hide()
         binding.tvExtendedBadge.visibility = View.GONE
         binding.btnConnect.text = "Connect"
-        binding.btnKeyboard.isEnabled = false
         binding.hudKeyboard.isEnabled = false
         showHomeUi()
         hideKeyboard()
@@ -532,14 +529,12 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         binding.hiddenInput.text?.clear()
         val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
         imm.showSoftInput(binding.hiddenInput, InputMethodManager.SHOW_FORCED)
-        binding.btnKeyboard.alpha = 1f
     }
 
     private fun hideKeyboard() {
         keyboardVisible = false
         val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
         imm.hideSoftInputFromWindow(binding.hiddenInput.windowToken, 0)
-        binding.btnKeyboard.alpha = 0.5f
     }
 
     private fun androidToWinVk(keyCode: Int): Int? = when (keyCode) {

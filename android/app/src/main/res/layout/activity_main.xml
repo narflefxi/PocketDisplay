@@ -391,53 +391,6 @@
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 
-            <!-- Quick actions -->
-            <androidx.cardview.widget.CardView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                app:cardCornerRadius="12dp"
-                app:cardElevation="2dp"
-                app:cardBackgroundColor="@color/colorCardBg"
-                android:layout_marginBottom="16dp">
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:padding="16dp">
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="QUICK ACTIONS"
-                        android:textColor="@color/colorLight"
-                        android:textSize="10sp"
-                        android:letterSpacing="0.12"
-                        android:layout_marginBottom="12dp" />
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal">
-                        <Button
-                            android:id="@+id/btnKeyboard"
-                            android:layout_width="0dp"
-                            android:layout_height="40dp"
-                            android:layout_weight="1"
-                            android:text="⌨ Keyboard"
-                            android:textSize="11sp"
-                            android:enabled="false"
-                            style="@style/Widget.PocketDisplay.Button.Outline"
-                            android:layout_marginEnd="8dp" />
-                        <Button
-                            android:layout_width="0dp"
-                            android:layout_height="40dp"
-                            android:layout_weight="1"
-                            android:text="🖱 Mouse"
-                            android:textSize="11sp"
-                            android:enabled="false"
-                            style="@style/Widget.PocketDisplay.Button.Outline" />
-                    </LinearLayout>
-                </LinearLayout>
-            </androidx.cardview.widget.CardView>
-
             <!-- Connect button -->
             <Button
                 android:id="@+id/btnConnect"
