@@ -392,6 +392,17 @@ struct TcpVideoServerWrap : IStreamer {
 int main(int argc, char* argv[]) {
     g_con = GetStdHandle(STD_OUTPUT_HANDLE);
     WSADATA wsa{}; WSAStartup(MAKEWORD(2, 2), &wsa);  // must be before RunDiscovery
+
+    // If launched without an inherited terminal (e.g. double-click from Explorer),
+    // free the console so only the GUI dashboard is shown.
+    {
+        DWORD pids[2];
+        if (GetConsoleProcessList(pids, 2) <= 1) {
+            FreeConsole();
+            g_con = INVALID_HANDLE_VALUE;
+        }
+    }
+
     GuiLaunch();  // spawn dashboard window
     PrintBanner();
 
@@ -423,6 +434,19 @@ int main(int argc, char* argv[]) {
             else if (bitrate_kbps == 8000)           bitrate_kbps = std::stoi(arg);
             else if (target_fps == 60)               target_fps   = std::stoi(arg);
         }
+    }
+
+    // One-click mode: no CLI args supplied — show Start button in GUI and wait.
+    const bool oneClickMode = (argc == 1);
+    if (oneClickMode) {
+        strncpy_s(g_gui.statusMsg, "Click \u25b6 Start Streaming to begin", 255);
+        g_gui.waitingForStart.store(true);
+        while (g_running && !g_gui.guiStartRequested.load()) {
+            Sleep(100);
+        }
+        g_gui.waitingForStart.store(false);
+        if (!g_running) return 0;
+        strncpy_s(g_gui.statusMsg, "Detecting connection\u2026", 255);
     }
 
     bool auto_discover = false;

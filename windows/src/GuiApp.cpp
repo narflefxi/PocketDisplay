@@ -315,6 +315,18 @@ static void PaintDashboard(HDC dc, int cx, int cy, int cw, int ch) {
     wchar_t bkStr[32]; swprintf_s(bkStr, bk > 0 ? L"%d kbps" : L"—", bk);
     DrawText_(dc, bkStr, cx+36, mcY+28, cw-80, 20, C_TEXT);
 
+    // ── One-click Start button (shown only when waiting for user to start) ──
+    if (g_gui.waitingForStart.load()) {
+        int btnY = mcY + 66, btnH = 40;
+        bool started = g_gui.guiStartRequested.load();
+        COLORREF btnCol = started ? C_MUTED : C_ORANGE;
+        RoundRectFill(dc, cx+20, btnY, cw-40, btnH, 10, btnCol);
+        SelectObject(dc, fVal);
+        DrawText_(dc, started ? L"Starting…" : L"▶  Start Streaming",
+                  cx+20, btnY, cw-40, btnH, RGB(255,255,255),
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+
     DeleteObject(fLabel); DeleteObject(fVal); DeleteObject(fSm);
 }
 
@@ -404,6 +416,20 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 g_page = i;
                 InvalidateRect(hwnd, nullptr, FALSE);
                 break;
+            }
+        }
+        // Hit-test Start button (dashboard page, one-click mode)
+        if (g_page == 0 && g_gui.waitingForStart.load() &&
+            !g_gui.guiStartRequested.load()) {
+            RECT cr; GetClientRect(hwnd, &cr);
+            int cw = cr.right - SIDEBAR_W;
+            // Button occupies cx+20..cx+20+(cw-40) at btnY..btnY+40
+            // mcY = cardY + cardH + 14 + 84 = 62 + 80 + 14 + 84 = 240
+            const int btnY = 240 + 66;
+            if (mx >= SIDEBAR_W + 20 && mx <= cr.right - 20 &&
+                my >= btnY && my < btnY + 40) {
+                g_gui.guiStartRequested.store(true);
+                InvalidateRect(hwnd, nullptr, FALSE);
             }
         }
         return 0;

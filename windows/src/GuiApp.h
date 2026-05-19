@@ -8,12 +8,16 @@
 
 // Shared state written by the streaming thread; read by the GUI thread.
 struct GuiState {
-    std::atomic<bool>  connected   {false};
-    std::atomic<bool>  streaming   {false};
-    std::atomic<int>   fps         {0};
-    std::atomic<int>   bitrateKbps {0};
-    std::atomic<int>   capW        {0};
-    std::atomic<int>   capH        {0};
+    std::atomic<bool>  connected        {false};
+    std::atomic<bool>  streaming        {false};
+    std::atomic<int>   fps              {0};
+    std::atomic<int>   bitrateKbps      {0};
+    std::atomic<int>   capW             {0};
+    std::atomic<int>   capH             {0};
+    // Set by GUI "Start" button when launched without CLI args (one-click mode).
+    std::atomic<bool>  guiStartRequested{false};
+    // True once main() has configured the streaming params (GUI-only launch).
+    std::atomic<bool>  waitingForStart  {false};
     char               mode[32]    = "USB";   // written once before GUI starts
     char               statusMsg[256] = "Starting…";
 };
