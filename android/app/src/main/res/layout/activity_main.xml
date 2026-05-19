@@ -243,6 +243,27 @@
                     android:layout_marginStart="10dp" />
             </LinearLayout>
 
+            <!-- Nav: About -->
+            <LinearLayout
+                android:id="@+id/navAbout"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingStart="37dp">
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:src="@drawable/ic_nav_settings" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="About"
+                    android:textColor="#AAAAAA"
+                    android:textSize="13sp"
+                    android:layout_marginStart="10dp" />
+            </LinearLayout>
+
             <!-- Mode toggle at bottom of sidebar -->
             <LinearLayout
                 android:layout_width="match_parent"
@@ -288,8 +309,9 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- Main content area -->
+        <!-- Main content area - Dashboard -->
         <LinearLayout
+            android:id="@+id/panelDashboard"
             android:layout_width="0dp"
             android:layout_height="0dp"
             android:orientation="vertical"
@@ -400,6 +422,95 @@
                 android:textSize="14sp"
                 android:enabled="false"
                 style="@style/Widget.PocketDisplay.Button.Primary" />
+
+        </LinearLayout>
+
+        <!-- About panel -->
+        <LinearLayout
+            android:id="@+id/panelAbout"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:orientation="vertical"
+            android:background="@color/colorBackground"
+            android:padding="24dp"
+            android:visibility="gone"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toEndOf="@id/sidebar"
+            app:layout_constraintEnd_toEndOf="parent">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="About"
+                android:textColor="@color/colorDark"
+                android:textSize="22sp"
+                android:fontFamily="@font/anton_regular"
+                android:textStyle="bold"
+                android:layout_marginBottom="24dp" />
+
+            <ImageView
+                android:layout_width="160dp"
+                android:layout_height="wrap_content"
+                android:src="@drawable/logo_primary"
+                android:scaleType="fitStart"
+                android:adjustViewBounds="true"
+                android:layout_marginBottom="24dp" />
+
+            <androidx.cardview.widget.CardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:cardCornerRadius="12dp"
+                app:cardElevation="2dp"
+                app:cardBackgroundColor="@color/colorCardBg">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="PocketDisplay"
+                        android:textColor="@color/colorDark"
+                        android:textSize="16sp"
+                        android:fontFamily="@font/space_grotesk_medium"
+                        android:textStyle="bold" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Version 0.1.0"
+                        android:textColor="@color/colorLight"
+                        android:textSize="12sp"
+                        android:layout_marginTop="2dp" />
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:background="@color/colorDivider"
+                        android:layout_marginTop="12dp"
+                        android:layout_marginBottom="12dp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Use your Android phone as a wireless or USB secondary display for Windows — with touch input, cursor overlay, and Mirror/Extended desktop modes."
+                        android:textColor="@color/colorMedium"
+                        android:textSize="13sp"
+                        android:lineSpacingExtra="3dp" />
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:background="@color/colorDivider"
+                        android:layout_marginTop="12dp"
+                        android:layout_marginBottom="12dp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="github.com/narflefxi/PocketDisplay"
+                        android:textColor="@color/colorPrimary"
+                        android:textSize="12sp"
+                        android:fontFamily="monospace" />
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
 
         </LinearLayout>
 

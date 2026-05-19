@@ -142,6 +142,14 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         binding.btnModeWifi.setOnClickListener { setMode(false) }
         binding.btnModeUsb.setOnClickListener  { setMode(true)  }
         binding.btnConnect.setOnClickListener  { toggleReceiver() }
+        binding.navAbout.setOnClickListener {
+            binding.panelDashboard.visibility = View.GONE
+            binding.panelAbout.visibility = View.VISIBLE
+        }
+        binding.navDashboard.setOnClickListener {
+            binding.panelAbout.visibility = View.GONE
+            binding.panelDashboard.visibility = View.VISIBLE
+        }
         binding.hudDisconnect.setOnClickListener { stopReceiver() }
         binding.hudKeyboard.setOnClickListener { toggleKeyboard() }
 
