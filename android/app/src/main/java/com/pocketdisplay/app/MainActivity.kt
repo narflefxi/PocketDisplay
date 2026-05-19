@@ -305,8 +305,11 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     private fun onWindowsSizeKnown(w: Int, h: Int) {
         windowsW = w; windowsH = h
         Log.d(TAG, "Windows size known: ${w}x${h}")
-        transformLogged = false   // force log to re-fire with real content dimensions
-        // Re-apply after video used encoded frame size; defer past layout / surface size churn.
+        transformLogged = false
+        // Set buffer size from Windows dimensions immediately — stream info (type 2)
+        // arrives before the codec config, so this prevents the first frames from
+        // rendering at the wrong size and appearing blurry.
+        binding.textureView.surfaceTexture?.setDefaultBufferSize(w, h)
         scheduleApplyFillTransform()
     }
 

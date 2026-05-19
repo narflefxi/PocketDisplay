@@ -29,7 +29,7 @@ class VideoDecoder(
                 return
             }
 
-            val format = MediaFormat.createVideoFormat("video/avc", 1920, 1080)
+            val format = MediaFormat.createVideoFormat("video/avc", 1, 1)
             format.setByteBuffer("csd-0", ByteBuffer.wrap(sps))
             if (pps != null) format.setByteBuffer("csd-1", ByteBuffer.wrap(pps))
 
@@ -68,7 +68,8 @@ class VideoDecoder(
 
     private fun startOutputDrain() {
         Thread({
-            val info = MediaCodec.BufferInfo()
+            val info  = MediaCodec.BufferInfo()
+            val info2 = MediaCodec.BufferInfo()
             while (running) {
                 try {
                     when (val idx = codec?.dequeueOutputBuffer(info, 10_000L) ?: break) {
@@ -80,12 +81,29 @@ class VideoDecoder(
                             }
                         }
                         in 0..Int.MAX_VALUE -> {
-                                codec?.releaseOutputBuffer(idx, /*render=*/true)
-                                if (!firstFrameDispatched) {
-                                    firstFrameDispatched = true
-                                    onFirstFrame?.invoke()
+                            // Drain any additional queued frames, dropping stale ones
+                            // without rendering to prevent ghosting under jitter.
+                            var renderIdx = idx
+                            while (true) {
+                                val peekIdx = codec?.dequeueOutputBuffer(info2, 0L) ?: break
+                                if (peekIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                                    codec?.outputFormat?.let { fmt ->
+                                        val w = fmt.getInteger(MediaFormat.KEY_WIDTH)
+                                        val h = fmt.getInteger(MediaFormat.KEY_HEIGHT)
+                                        if (w > 0 && h > 0) onDimensions?.invoke(w, h)
+                                    }
+                                    continue
                                 }
+                                if (peekIdx < 0) break  // no more pending frames
+                                codec?.releaseOutputBuffer(renderIdx, false) // drop stale
+                                renderIdx = peekIdx
                             }
+                            codec?.releaseOutputBuffer(renderIdx, /*render=*/true)
+                            if (!firstFrameDispatched) {
+                                firstFrameDispatched = true
+                                onFirstFrame?.invoke()
+                            }
+                        }
                     }
                 } catch (_: Exception) { break }
             }
