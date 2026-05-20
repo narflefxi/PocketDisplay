@@ -144,7 +144,6 @@ class VideoDecoder(
         return Pair(sps, pps)
     }
 
-    // ← FIX: reset lastSpsData so next reconnect forces re-configure
     fun resetForReconnect() {
         lastSpsData = null
     }
@@ -152,6 +151,7 @@ class VideoDecoder(
     fun release() {
         running = false
         lastSpsData = null
+        try { Thread.sleep(50) } catch (_: InterruptedException) {}  // ← beri waktu drain thread berhenti
         try { codec?.stop() } catch (_: Exception) {}
         try { codec?.release() } catch (_: Exception) {}
         codec = null
