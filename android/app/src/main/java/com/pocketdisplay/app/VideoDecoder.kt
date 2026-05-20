@@ -19,7 +19,6 @@ class VideoDecoder(
     private var lastSpsData: ByteArray? = null
 
     fun configure(spsData: ByteArray) {
-        if (lastSpsData != null && spsData.contentEquals(lastSpsData!!)) return
         lastSpsData = spsData.copyOf()
         release()
         try {
@@ -151,7 +150,7 @@ class VideoDecoder(
     fun release() {
         running = false
         lastSpsData = null
-        try { Thread.sleep(50) } catch (_: InterruptedException) {}  // ← beri waktu drain thread berhenti
+        try { Thread.sleep(50) } catch (_: InterruptedException) {}
         try { codec?.stop() } catch (_: Exception) {}
         try { codec?.release() } catch (_: Exception) {}
         codec = null
