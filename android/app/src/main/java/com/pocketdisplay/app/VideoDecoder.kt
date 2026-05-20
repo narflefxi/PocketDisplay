@@ -33,7 +33,6 @@ class VideoDecoder(
             format.setByteBuffer("csd-0", ByteBuffer.wrap(sps))
             if (pps != null) format.setByteBuffer("csd-1", ByteBuffer.wrap(pps))
 
-            // Minimize decode latency (API 30+)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 format.setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
             }
@@ -81,8 +80,6 @@ class VideoDecoder(
                             }
                         }
                         in 0..Int.MAX_VALUE -> {
-                            // Drain any additional queued frames, dropping stale ones
-                            // without rendering to prevent ghosting under jitter.
                             var renderIdx = idx
                             while (true) {
                                 val peekIdx = codec?.dequeueOutputBuffer(info2, 0L) ?: break
@@ -94,11 +91,11 @@ class VideoDecoder(
                                     }
                                     continue
                                 }
-                                if (peekIdx < 0) break  // no more pending frames
-                                codec?.releaseOutputBuffer(renderIdx, false) // drop stale
+                                if (peekIdx < 0) break
+                                codec?.releaseOutputBuffer(renderIdx, false)
                                 renderIdx = peekIdx
                             }
-                            codec?.releaseOutputBuffer(renderIdx, /*render=*/true)
+                            codec?.releaseOutputBuffer(renderIdx, true)
                             if (!firstFrameDispatched) {
                                 firstFrameDispatched = true
                                 onFirstFrame?.invoke()
@@ -110,8 +107,6 @@ class VideoDecoder(
         }, "VideoDecoder-Output").also { it.isDaemon = true }.start()
     }
 
-    // Split annexb stream (0x00 0x00 0x00 0x01 or 0x00 0x00 0x01 start codes)
-    // and return the raw SPS and PPS NAL payloads (without start code).
     private fun parseSpsAndPps(data: ByteArray): Pair<ByteArray?, ByteArray?> {
         var sps: ByteArray? = null
         var pps: ByteArray? = null
@@ -127,7 +122,6 @@ class VideoDecoder(
             val payloadStart = i + (if (sc4) 4 else 3)
             if (payloadStart >= data.size) break
 
-            // Find end of this NAL (next start code)
             var j = payloadStart + 1
             while (j < data.size - 2) {
                 if (data[j] == 0.toByte() && data[j+1] == 0.toByte() &&
@@ -148,6 +142,11 @@ class VideoDecoder(
             i = payloadStart
         }
         return Pair(sps, pps)
+    }
+
+    // ← FIX: reset lastSpsData so next reconnect forces re-configure
+    fun resetForReconnect() {
+        lastSpsData = null
     }
 
     fun release() {

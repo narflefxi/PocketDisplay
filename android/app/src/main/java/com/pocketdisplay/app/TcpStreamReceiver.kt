@@ -9,16 +9,6 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.concurrent.thread
 
-/**
- * USB mode: client TCP to 127.0.0.1:[port] (adb reverse to Windows).
- *
- * Wire format per message (big-endian):
- *   [4-byte uint32 length L][L bytes: uint8 type + payload]
- * type 0 = H.264 access unit
- * type 1 = codec config (Annex-B SPS+PPS)
- * type 2 = stream info (8–12 bytes: w,h uint32 BE [+ flags uint32 BE: bit0=extended])
- * type 3 = cursor (8 bytes: float BE nx, ny)
- */
 class TcpStreamReceiver(
     surface: Surface,
     private val port: Int,
@@ -50,10 +40,10 @@ class TcpStreamReceiver(
         isRunning = true
         Log.i(TAG, "Mode=USB host=$HOST transport=TCP port=$port")
         netThread = thread(name = "TcpStreamReceiver", isDaemon = true) {
-            while (isRunning) {  // ← OUTER retry loop: reconnect kalau Windows belum ready atau putus
+            while (isRunning) {  // ← OUTER retry loop
                 var socket: Socket? = null
                 try {
-                    // Inner connect retry: coba sampai berhasil atau isRunning = false
+                    // Inner connect retry
                     while (isRunning && socket == null) {
                         try {
                             val s = Socket()
@@ -70,7 +60,7 @@ class TcpStreamReceiver(
                     Log.i(TAG, "TCP connected to $HOST:$port")
                     onSenderIp?.invoke(HOST)
 
-                    // Send mode selection as first message so Windows reads it before streaming.
+                    // Send mode selection
                     if (modeToSend != null) {
                         Log.i(TAG, "Sending mode to Windows: $modeToSend")
                         socket.getOutputStream().write(
@@ -116,57 +106,3 @@ class TcpStreamReceiver(
                                     onCursorPos?.invoke(nx, ny, cursorType)
                                 }
                             }
-                            0 -> {
-                                videoPackets++
-                                if (videoPackets == 1L || videoPackets % 120L == 0L) {
-                                    Log.d(TAG, "Received frame packet (count=$videoPackets, bytes=${body.size})")
-                                }
-                                val kf = isLikelyKeyframe(body)
-                                decoder.decode(body, kf)
-                            }
-                            else -> Log.w(TAG, "Unknown USB TCP payload type=$type len=$msgLen")
-                        }
-                    }
-
-                } catch (e: Exception) {
-                    Log.w(TAG, "USB TCP disconnected: ${e.message} — retrying...")
-                    if (isRunning) onStatus("Reconnecting\u2026")
-                } finally {
-                    activeSocket = null
-                    try { socket?.close() } catch (_: Exception) {}
-                }
-
-                // Delay sebelum retry reconnect
-                if (isRunning) {
-                    try { Thread.sleep(500) } catch (_: InterruptedException) {}
-                }
-            }  // ← end outer retry loop
-        }
-    }
-
-    private fun isLikelyKeyframe(data: ByteArray): Boolean {
-        var i = 0
-        while (i + 4 < data.size) {
-            val sc4 = data[i] == 0.toByte() && data[i + 1] == 0.toByte() &&
-                data[i + 2] == 0.toByte() && data[i + 3] == 1.toByte()
-            val sc3 = !sc4 && data[i] == 0.toByte() && data[i + 1] == 0.toByte() &&
-                data[i + 2] == 1.toByte()
-            val start = i + if (sc4) 4 else if (sc3) 3 else {
-                i++
-                continue
-            }
-            if (start >= data.size) break
-            val nalType = data[start].toInt() and 0x1F
-            if (nalType == 5) return true
-            i = start + 1
-        }
-        return false
-    }
-
-    fun stop() {
-        isRunning = false
-        try { activeSocket?.close() } catch (_: Exception) {}
-        netThread?.interrupt()
-        decoder.release()
-    }
-}
