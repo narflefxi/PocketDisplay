@@ -40,10 +40,9 @@ class TcpStreamReceiver(
         isRunning = true
         Log.i(TAG, "Mode=USB host=$HOST transport=TCP port=$port")
         netThread = thread(name = "TcpStreamReceiver", isDaemon = true) {
-            while (isRunning) {  // ← OUTER retry loop
+            while (isRunning) {
                 var socket: Socket? = null
                 try {
-                    // Inner connect retry
                     while (isRunning && socket == null) {
                         try {
                             val s = Socket()
@@ -60,7 +59,6 @@ class TcpStreamReceiver(
                     Log.i(TAG, "TCP connected to $HOST:$port")
                     onSenderIp?.invoke(HOST)
 
-                    // Send mode selection
                     if (modeToSend != null) {
                         Log.i(TAG, "Sending mode to Windows: $modeToSend")
                         socket.getOutputStream().write(
@@ -106,3 +104,57 @@ class TcpStreamReceiver(
                                     onCursorPos?.invoke(nx, ny, cursorType)
                                 }
                             }
+                            0 -> {
+                                videoPackets++
+                                if (videoPackets == 1L || videoPackets % 120L == 0L) {
+                                    Log.d(TAG, "Received frame packet (count=$videoPackets, bytes=${body.size})")
+                                }
+                                val kf = isLikelyKeyframe(body)
+                                decoder.decode(body, kf)
+                            }
+                            else -> Log.w(TAG, "Unknown USB TCP payload type=$type len=$msgLen")
+                        }
+                    }
+
+                } catch (e: Exception) {
+                    Log.w(TAG, "USB TCP disconnected: ${e.message} — retrying...")
+                    if (isRunning) onStatus("Reconnecting\u2026")
+                } finally {
+                    activeSocket = null
+                    try { socket?.close() } catch (_: Exception) {}
+                    decoder.resetForReconnect()
+                }
+
+                if (isRunning) {
+                    try { Thread.sleep(500) } catch (_: InterruptedException) {}
+                }
+            }
+        }
+    }
+
+    private fun isLikelyKeyframe(data: ByteArray): Boolean {
+        var i = 0
+        while (i + 4 < data.size) {
+            val sc4 = data[i] == 0.toByte() && data[i + 1] == 0.toByte() &&
+                data[i + 2] == 0.toByte() && data[i + 3] == 1.toByte()
+            val sc3 = !sc4 && data[i] == 0.toByte() && data[i + 1] == 0.toByte() &&
+                data[i + 2] == 1.toByte()
+            val start = i + if (sc4) 4 else if (sc3) 3 else {
+                i++
+                continue
+            }
+            if (start >= data.size) break
+            val nalType = data[start].toInt() and 0x1F
+            if (nalType == 5) return true
+            i = start + 1
+        }
+        return false
+    }
+
+    fun stop() {
+        isRunning = false
+        try { activeSocket?.close() } catch (_: Exception) {}
+        netThread?.interrupt()
+        decoder.release()
+    }
+}
