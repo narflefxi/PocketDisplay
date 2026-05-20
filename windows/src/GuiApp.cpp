@@ -10,21 +10,21 @@
 GuiState g_gui;
 
 // ── Brand palette ─────────────────────────────────────────────────────────────
-static const COLORREF C_ORANGE   = RGB(0xFF, 0x3B, 0x30);  // #FF3B30 primary/red
-static const COLORREF C_DARK     = RGB(0x0B, 0x0B, 0x0D);  // #0B0B0D near-black
-static const COLORREF C_SIDEBAR  = RGB(0x0B, 0x0B, 0x0D);  // #0B0B0D sidebar
-static const COLORREF C_BG       = RGB(0xFF, 0xF7, 0xEF);  // #FFF7EF background
-static const COLORREF C_CARD     = RGB(0xFF, 0xF7, 0xEF);  // #FFF7EF card fill
-static const COLORREF C_TEXT     = RGB(0x0B, 0x0B, 0x0D);  // #0B0B0D text
+static const COLORREF C_ORANGE   = RGB(0xFF, 0x3B, 0x30);
+static const COLORREF C_DARK     = RGB(0x0B, 0x0B, 0x0D);
+static const COLORREF C_SIDEBAR  = RGB(0x0B, 0x0B, 0x0D);
+static const COLORREF C_BG       = RGB(0xFF, 0xF7, 0xEF);
+static const COLORREF C_CARD     = RGB(0xFF, 0xF7, 0xEF);
+static const COLORREF C_TEXT     = RGB(0x0B, 0x0B, 0x0D);
 static const COLORREF C_MUTED    = RGB(0x88, 0x88, 0x88);
 static const COLORREF C_GREEN    = RGB(0x22, 0xC5, 0x5E);
-static const COLORREF C_STATUSBR = RGB(0xFF, 0xF7, 0xEF);  // #FFF7EF status bar
+static const COLORREF C_STATUSBR = RGB(0xFF, 0xF7, 0xEF);
 static const COLORREF C_DIVIDER  = RGB(0xE5, 0xE5, 0xE5);
 
-static const int SIDEBAR_W = 200;
+static const int SIDEBAR_W  = 200;
 static const int STATUSBAR_H = 34;
-static const int WIN_W = 860;
-static const int WIN_H = 560;
+static const int WIN_W      = 860;
+static const int WIN_H      = 560;
 
 // ── GDI helpers ───────────────────────────────────────────────────────────────
 static void FillR(HDC dc, int x, int y, int w, int h, COLORREF c) {
@@ -50,7 +50,7 @@ static HFONT MakeFont(int pts, bool bold, const wchar_t* face = L"Space Grotesk"
 }
 static void RoundRectFill(HDC dc, int x, int y, int w, int h, int r, COLORREF c) {
     HBRUSH br = CreateSolidBrush(c);
-    HPEN   pn = CreatePen(PS_SOLID, 1, C_DIVIDER);  // subtle 1px border
+    HPEN   pn = CreatePen(PS_SOLID, 1, C_DIVIDER);
     auto   ob = SelectObject(dc, br);
     auto   op = SelectObject(dc, pn);
     RoundRect(dc, x, y, x+w, y+h, r, r);
@@ -58,37 +58,30 @@ static void RoundRectFill(HDC dc, int x, int y, int w, int h, int r, COLORREF c)
     DeleteObject(br); DeleteObject(pn);
 }
 
-// Draw the orange speech-bubble P mascot at (x,y) of size s.
 static void DrawLogo(HDC dc, int x, int y, int s) {
     HBRUSH orBr = CreateSolidBrush(C_ORANGE);
     HBRUSH wBr  = CreateSolidBrush(RGB(255,255,255));
     HBRUSH dBr  = CreateSolidBrush(C_DARK);
     HPEN   nPen = CreatePen(PS_NULL, 0, 0);
 
-    // Body (rounded rect)
     SelectObject(dc, orBr); SelectObject(dc, nPen);
     int bx=x, by=y, bw=s, bh=int(s*0.75f);
     RoundRect(dc, bx, by, bx+bw, by+bh, s/5, s/5);
 
-    // Tail triangle (bottom-left)
     POINT tri[3] = {{x + s/5, by+bh-2}, {x + s/3, by+bh+s/4}, {x + s/2, by+bh-2}};
     SelectObject(dc, orBr);
     Polygon(dc, tri, 3);
 
-    // Left eye white
     int ew = s/5, ex1 = x+s/5+2, ey = by+bh/3;
     SelectObject(dc, wBr);
     Ellipse(dc, ex1, ey, ex1+ew, ey+ew);
-    // Left pupil
     SelectObject(dc, dBr);
     int pw=ew/2;
     Ellipse(dc, ex1+ew/4, ey+ew/4, ex1+ew/4+pw, ey+ew/4+pw);
 
-    // Right eye white
     int ex2 = x + s*3/5;
     SelectObject(dc, wBr);
     Ellipse(dc, ex2, ey, ex2+ew, ey+ew);
-    // Right pupil
     SelectObject(dc, dBr);
     Ellipse(dc, ex2+ew/4, ey+ew/4, ex2+ew/4+pw, ey+ew/4+pw);
 
@@ -98,14 +91,13 @@ static void DrawLogo(HDC dc, int x, int y, int s) {
 // ── Nav items ─────────────────────────────────────────────────────────────────
 struct NavItem { const wchar_t* label; };
 static const NavItem NAV[] = {{L"Dashboard"}, {L"Connection"}, {L"Settings"}, {L"About"}};
-static int g_page = 0;  // active page index
+static int g_page = 0;
 
-// ── Sidebar logo bitmap (loaded once from logo-text.png) ─────────────────────
+// ── Sidebar logo bitmap ───────────────────────────────────────────────────────
 static HBITMAP g_logoTextBmp = nullptr;
 static int     g_logoTextW   = 0;
 static int     g_logoTextH   = 0;
 
-// Load a PNG file via WIC, scale to fit within maxW×maxH, return premult-BGRA HBITMAP.
 static HBITMAP LoadPngHBitmap(const wchar_t* path, int maxW, int maxH) {
     IWICImagingFactory* fac = nullptr;
     if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr,
@@ -140,7 +132,7 @@ static HBITMAP LoadPngHBitmap(const wchar_t* path, int maxW, int maxH) {
     BITMAPINFOHEADER bih{};
     bih.biSize        = sizeof(bih);
     bih.biWidth       = static_cast<LONG>(outW);
-    bih.biHeight      = -static_cast<LONG>(outH);  // top-down
+    bih.biHeight      = -static_cast<LONG>(outH);
     bih.biPlanes      = 1;
     bih.biBitCount    = 32;
     bih.biCompression = BI_RGB;
@@ -161,7 +153,7 @@ static HBITMAP LoadPngHBitmap(const wchar_t* path, int maxW, int maxH) {
 }
 
 // ── Window state ──────────────────────────────────────────────────────────────
-static HWND  g_hwnd  = nullptr;
+static HWND    g_hwnd  = nullptr;
 static UINT_PTR g_timer = 0;
 
 // ── Paint ─────────────────────────────────────────────────────────────────────
@@ -169,7 +161,6 @@ static void PaintSidebar(HDC dc, int winH) {
     const int h = winH - STATUSBAR_H;
     FillR(dc, 0, 0, SIDEBAR_W, h, C_SIDEBAR);
 
-    // Logo-text image (or fallback)
     if (g_logoTextBmp) {
         HDC mdc2 = CreateCompatibleDC(dc);
         HGDIOBJ obj = SelectObject(mdc2, g_logoTextBmp);
@@ -186,11 +177,9 @@ static void PaintSidebar(HDC dc, int winH) {
         DeleteObject(fBold);
     }
 
-    // Divider
     int divY = g_logoTextBmp ? (6 + g_logoTextH + 6) : 56;
     FillR(dc, 16, divY, SIDEBAR_W-32, 1, RGB(50,50,50));
 
-    // Nav items
     int navStart = g_logoTextBmp ? (6 + g_logoTextH + 14) : 68;
     HFONT fNav = MakeFont(12, false, L"Space Grotesk");
     SelectObject(dc, fNav);
@@ -198,15 +187,14 @@ static void PaintSidebar(HDC dc, int winH) {
         int iy = navStart + i*44;
         bool active = (i == g_page);
         if (active) {
-            FillR(dc, 0, iy, SIDEBAR_W, 40, C_ORANGE);              // red highlight
-            FillR(dc, 0, iy, 3, 40, C_ORANGE);                     // left bar
+            FillR(dc, 0, iy, SIDEBAR_W, 40, C_ORANGE);
+            FillR(dc, 0, iy, 3, 40, C_ORANGE);
         }
         DrawText_(dc, NAV[i].label, 22, iy, SIDEBAR_W-30, 40,
                   active ? RGB(255,255,255) : C_MUTED);
     }
     DeleteObject(fNav);
 
-    // Version at bottom
     HFONT fSm = MakeFont(10, false, L"Space Grotesk");
     SelectObject(dc, fSm);
     DrawText_(dc, L"v0.1.0", 16, h-24, SIDEBAR_W-32, 20, RGB(80,80,80));
@@ -216,16 +204,14 @@ static void PaintSidebar(HDC dc, int winH) {
 static void PaintStatusBar(HDC dc, int winW, int winH) {
     int y = winH - STATUSBAR_H;
     FillR(dc, 0, y, winW, STATUSBAR_H, C_STATUSBR);
-    FillR(dc, 0, y, winW, 1, C_DIVIDER);  // top border
+    FillR(dc, 0, y, winW, 1, C_DIVIDER);
 
     HFONT f = MakeFont(11, false, L"Space Grotesk");
     SelectObject(dc, f);
 
-    // PC name
     wchar_t pcName[128]{}; DWORD pcNameLen = 127; GetComputerNameW(pcName, &pcNameLen);
     DrawText_(dc, pcName, SIDEBAR_W+16, y, 180, STATUSBAR_H, C_TEXT);
 
-    // Connection status dot
     bool conn = g_gui.connected.load();
     HBRUSH dotBr = CreateSolidBrush(conn ? C_GREEN : C_MUTED);
     HPEN   np    = CreatePen(PS_NULL, 0, 0);
@@ -241,7 +227,6 @@ static void PaintStatusBar(HDC dc, int winW, int winH) {
 }
 
 static void PaintDashboard(HDC dc, int cx, int cy, int cw, int ch) {
-    // Section title
     HFONT fTitle = MakeFont(20, false, L"Anton");
     SelectObject(dc, fTitle);
     DrawText_(dc, L"Dashboard", cx+20, cy+18, cw-40, 32, C_TEXT);
@@ -251,7 +236,6 @@ static void PaintDashboard(HDC dc, int cx, int cy, int cw, int ch) {
     HFONT fVal   = MakeFont(13, true,  L"Space Grotesk");
     HFONT fSm    = MakeFont(11, false, L"Space Grotesk");
 
-    // ── Status card ──────────────────────────────────────────────────
     int cardY = cy+62, cardH = 80;
     RoundRectFill(dc, cx+20, cardY, cw-40, cardH, 12, C_CARD);
 
@@ -265,7 +249,6 @@ static void PaintDashboard(HDC dc, int cx, int cy, int cw, int ch) {
     SelectObject(dc, fVal);
     DrawText_(dc, statusStr, cx+36, cardY+30, cw-80, 22, C_TEXT);
 
-    // Status dot
     HBRUSH dotBr = CreateSolidBrush(conn ? C_GREEN : C_MUTED);
     HPEN   np    = CreatePen(PS_NULL, 0, 0);
     SelectObject(dc, dotBr); SelectObject(dc, np);
@@ -279,7 +262,6 @@ static void PaintDashboard(HDC dc, int cx, int cy, int cw, int ch) {
     MultiByteToWideChar(CP_UTF8, 0, sm, -1, smW.data(), smLen);
     DrawText_(dc, smW.c_str(), cx+54, cardY+52, cw-100, 20, C_MUTED);
 
-    // ── Stats card ────────────────────────────────────────────────────
     int sc1y = cardY + cardH + 14;
     RoundRectFill(dc, cx+20, sc1y, (cw-50)/2, 70, 12, C_CARD);
     SelectObject(dc, fLabel);
@@ -302,7 +284,6 @@ static void PaintDashboard(HDC dc, int cx, int cy, int cw, int ch) {
     wchar_t fpsStr[16]; swprintf_s(fpsStr, fps > 0 ? L"%d fps" : L"—", fps);
     DrawText_(dc, fpsStr, sc2x+16, sc1y+32, 140, 24, C_TEXT);
 
-    // ── Mode card ─────────────────────────────────────────────────────
     int mcY = sc1y + 84;
     RoundRectFill(dc, cx+20, mcY, cw-40, 52, 12, C_CARD);
     SelectObject(dc, fLabel);
@@ -315,7 +296,6 @@ static void PaintDashboard(HDC dc, int cx, int cy, int cw, int ch) {
     wchar_t bkStr[32]; swprintf_s(bkStr, bk > 0 ? L"%d kbps" : L"—", bk);
     DrawText_(dc, bkStr, cx+36, mcY+28, cw-80, 20, C_TEXT);
 
-    // ── One-click Start button (shown only when waiting for user to start) ──
     if (g_gui.waitingForStart.load()) {
         int btnY = mcY + 66, btnH = 40;
         bool started = g_gui.guiStartRequested.load();
@@ -334,7 +314,6 @@ static void PaintContent(HDC dc, int winW, int winH) {
     int cx = SIDEBAR_W, cy = 0;
     int cw = winW - SIDEBAR_W, ch = winH - STATUSBAR_H;
     FillR(dc, cx, cy, cw, ch, C_BG);
-    // Sidebar shadow strip
     FillR(dc, cx, cy, 1, ch, C_DIVIDER);
 
     switch (g_page) {
@@ -382,7 +361,7 @@ static void PaintContent(HDC dc, int winW, int winH) {
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_ERASEBKGND:
-        return 1;  // avoid flicker; we paint everything in WM_PAINT
+        return 1;
 
     case WM_PAINT: {
         PAINTSTRUCT ps;
@@ -390,7 +369,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         RECT cr; GetClientRect(hwnd, &cr);
         int W = cr.right, H = cr.bottom;
 
-        // Double-buffer
         HDC mdc = CreateCompatibleDC(dc);
         HBITMAP bmp = CreateCompatibleBitmap(dc, W, H);
         HGDIOBJ old = SelectObject(mdc, bmp);
@@ -409,7 +387,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
     case WM_LBUTTONDOWN: {
         int mx = LOWORD(lp), my = HIWORD(lp);
-        // Hit-test nav items
         for (int i = 0; i < 4; ++i) {
             int iy = 68 + i * 44;
             if (mx < SIDEBAR_W && my >= iy && my < iy + 40) {
@@ -418,13 +395,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 break;
             }
         }
-        // Hit-test Start button (dashboard page, one-click mode)
         if (g_page == 0 && g_gui.waitingForStart.load() &&
             !g_gui.guiStartRequested.load()) {
             RECT cr; GetClientRect(hwnd, &cr);
             int cw = cr.right - SIDEBAR_W;
-            // Button occupies cx+20..cx+20+(cw-40) at btnY..btnY+40
-            // mcY = cardY + cardH + 14 + 84 = 62 + 80 + 14 + 84 = 240
             const int btnY = 240 + 66;
             if (mx >= SIDEBAR_W + 20 && mx <= cr.right - 20 &&
                 my >= btnY && my < btnY + 40) {
@@ -436,7 +410,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
 
     case WM_TIMER:
-        InvalidateRect(hwnd, nullptr, FALSE);  // repaint for live stats
+        InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
 
     case WM_GETMINMAXINFO: {
@@ -446,8 +420,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
 
     case WM_CLOSE:
-        // Don't destroy — just hide. Streaming keeps running.
-        ShowWindow(hwnd, SW_HIDE);
+        ExitProcess(0);  // ← FIX: terminate cleanly saat user klik X
         return 0;
 
     case WM_DESTROY:
@@ -463,7 +436,6 @@ static void GuiThread() {
 
     HINSTANCE hInst = GetModuleHandleW(nullptr);
 
-    // ── Load logo-primary.png from exe directory ──────────────────────────────
     wchar_t exePath[MAX_PATH]{};
     GetModuleFileNameW(nullptr, exePath, MAX_PATH);
     wchar_t* lastSlash = wcsrchr(exePath, L'\\');
@@ -472,7 +444,6 @@ static void GuiThread() {
     wcscpy_s(imgPath, exePath);
     wcscat_s(imgPath, L"logo-primary.png");
 
-    // Max 184 wide, 52 tall to fit the sidebar header area
     g_logoTextBmp = LoadPngHBitmap(imgPath, SIDEBAR_W - 16, 52);
     if (g_logoTextBmp) {
         BITMAP bm{};
@@ -481,7 +452,6 @@ static void GuiThread() {
         g_logoTextH = bm.bmHeight;
     }
 
-    // ── Load custom fonts ─────────────────────────────────────────────────────
     wchar_t fntPath[MAX_PATH]{};
     for (const wchar_t* fname : {L"Anton-Regular.ttf",
                                   L"SpaceGrotesk-Medium.ttf",
@@ -491,19 +461,15 @@ static void GuiThread() {
         AddFontResourceExW(fntPath, FR_PRIVATE, nullptr);
     }
 
-    // ── Load icons (embedded resource → file fallback) ──────────────────────
-    // Load at explicit sizes for crisp taskbar (32px) and title bar (16px) icons.
     wchar_t icoPath[MAX_PATH]{};
     wcscpy_s(icoPath, exePath);
     wcscat_s(icoPath, L"icon.ico");
 
     auto LoadIconSz = [&](int sz) -> HICON {
-        // Try embedded resource first
         HICON h = reinterpret_cast<HICON>(
             LoadImageW(hInst, MAKEINTRESOURCEW(IDI_APPICON),
                        IMAGE_ICON, sz, sz, LR_DEFAULTCOLOR));
         if (!h) {
-            // Fallback: load from ico file next to exe
             h = reinterpret_cast<HICON>(
                 LoadImageW(nullptr, icoPath,
                            IMAGE_ICON, sz, sz, LR_LOADFROMFILE));
@@ -513,7 +479,6 @@ static void GuiThread() {
     HICON hIconBig   = LoadIconSz(32);
     HICON hIconSmall = LoadIconSz(16);
 
-    // ── Register window class ─────────────────────────────────────────────────
     WNDCLASSEXW wc{};
     wc.cbSize        = sizeof(wc);
     wc.style         = CS_HREDRAW | CS_VREDRAW;
@@ -526,7 +491,6 @@ static void GuiThread() {
     wc.lpszClassName = L"PocketDisplayGui";
     RegisterClassExW(&wc);
 
-    // Center on primary monitor
     int sx = GetSystemMetrics(SM_CXSCREEN);
     int sy = GetSystemMetrics(SM_CYSCREEN);
 
@@ -538,11 +502,9 @@ static void GuiThread() {
 
     if (!g_hwnd) { CoUninitialize(); return; }
 
-    // Explicitly set taskbar icon (big) and title-bar icon (small)
     SendMessageW(g_hwnd, WM_SETICON, ICON_BIG,   reinterpret_cast<LPARAM>(hIconBig));
     SendMessageW(g_hwnd, WM_SETICON, ICON_SMALL,  reinterpret_cast<LPARAM>(hIconSmall));
 
-    // Refresh every 1 second for live stats
     g_timer = SetTimer(g_hwnd, 1, 1000, nullptr);
 
     ShowWindow(g_hwnd, SW_SHOW);
