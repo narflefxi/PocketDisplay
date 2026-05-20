@@ -631,9 +631,9 @@ int main(int argc, char* argv[]) {
     strncpy_s(g_gui.statusMsg, "Waiting for Android…", 255);
 
     std::thread resend_thread([&]() {
-        bool dims_sent = false;
         while (g_running) {
-            if (!dims_sent) {
+            if (!android_ready) {
+                // ← FIX: kirim stream info + codec config setiap cycle sampai Android ACK
                 uint8_t dims[12];
                 const uint32_t sw = htonl(static_cast<uint32_t>(cap_w));
                 const uint32_t sh = htonl(static_cast<uint32_t>(cap_h));
@@ -642,10 +642,7 @@ int main(int argc, char* argv[]) {
                 std::memcpy(dims + 4, &sh, 4);
                 std::memcpy(dims + 8, &sf, 4);
                 streamer->SendFrame(dims, 12, 0, pocketdisplay::FLAG_STREAM_INFO);
-                dims_sent = true;
-            }
 
-            if (!android_ready) {
                 std::vector<uint8_t> sps_pps;
                 if (encoder->GetConfigPacket(sps_pps) && !sps_pps.empty()) {
                     streamer->SendFrame(sps_pps.data(), sps_pps.size(),
@@ -761,7 +758,7 @@ int main(int argc, char* argv[]) {
             std::this_thread::sleep_for(next_frame - now);
         next_frame += frame_interval;
 
-        // ← FIX: jangan kirim video frames sampai Android konfirmasi codec ready
+        // Gate: jangan kirim video frames sampai Android konfirmasi codec ready
         if (!android_ready) continue;
 
         int w = 0, h = 0;
