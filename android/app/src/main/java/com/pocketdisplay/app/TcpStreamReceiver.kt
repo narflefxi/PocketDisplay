@@ -50,86 +50,97 @@ class TcpStreamReceiver(
         isRunning = true
         Log.i(TAG, "Mode=USB host=$HOST transport=TCP port=$port")
         netThread = thread(name = "TcpStreamReceiver", isDaemon = true) {
-            var socket: Socket? = null
-            try {
-                while (isRunning && socket == null) {
-                    try {
-                        val s = Socket()
-                        s.tcpNoDelay = true
-                        s.connect(InetSocketAddress(HOST, port), 1500)
-                        socket = s
-                    } catch (_: Exception) {
-                        try { Thread.sleep(300) } catch (_: InterruptedException) {}
+            while (isRunning) {  // ← OUTER retry loop: reconnect kalau Windows belum ready atau putus
+                var socket: Socket? = null
+                try {
+                    // Inner connect retry: coba sampai berhasil atau isRunning = false
+                    while (isRunning && socket == null) {
+                        try {
+                            val s = Socket()
+                            s.tcpNoDelay = true
+                            s.connect(InetSocketAddress(HOST, port), 1500)
+                            socket = s
+                        } catch (_: Exception) {
+                            try { Thread.sleep(300) } catch (_: InterruptedException) {}
+                        }
                     }
-                }
-                if (socket == null) return@thread
+                    if (socket == null) break
 
-                activeSocket = socket
-                Log.i(TAG, "TCP connected to $HOST:$port")
-                onSenderIp?.invoke(HOST)
+                    activeSocket = socket
+                    Log.i(TAG, "TCP connected to $HOST:$port")
+                    onSenderIp?.invoke(HOST)
 
-                // Send mode selection as first message so Windows reads it before streaming.
-                if (modeToSend != null) {
-                    Log.i(TAG, "Sending mode to Windows: $modeToSend")
-                    socket.getOutputStream().write("POCKETDISPLAY_MODE:$modeToSend\n".toByteArray(Charsets.US_ASCII))
-                    socket.getOutputStream().flush()
-                    Log.i(TAG, "Mode sent OK")
-                }
-
-                val input = DataInputStream(socket.getInputStream())
-                val lenBuf = ByteArray(4)
-
-                while (isRunning) {
-                    input.readFully(lenBuf)
-                    val msgLen = ByteBuffer.wrap(lenBuf).order(ByteOrder.BIG_ENDIAN).int
-                    if (msgLen < 1 || msgLen > MAX_MESSAGE) {
-                        Log.e(TAG, "Invalid USB TCP message length: $msgLen")
-                        break
+                    // Send mode selection as first message so Windows reads it before streaming.
+                    if (modeToSend != null) {
+                        Log.i(TAG, "Sending mode to Windows: $modeToSend")
+                        socket.getOutputStream().write(
+                            "POCKETDISPLAY_MODE:$modeToSend\n".toByteArray(Charsets.US_ASCII))
+                        socket.getOutputStream().flush()
+                        Log.i(TAG, "Mode sent OK")
                     }
-                    val payload = ByteArray(msgLen)
-                    input.readFully(payload)
-                    val type = payload[0].toInt() and 0xFF
-                    val body = if (msgLen > 1) payload.copyOfRange(1, msgLen) else ByteArray(0)
-                    Log.d(TAG, "USB TCP received type=$type payload=${body.size}")
 
-                    when (type) {
-                        1 -> {
-                            Log.i(TAG, "Decoder started (codec config)")
-                            decoder.configure(body)
+                    val input = DataInputStream(socket.getInputStream())
+                    val lenBuf = ByteArray(4)
+
+                    while (isRunning) {
+                        input.readFully(lenBuf)
+                        val msgLen = ByteBuffer.wrap(lenBuf).order(ByteOrder.BIG_ENDIAN).int
+                        if (msgLen < 1 || msgLen > MAX_MESSAGE) {
+                            Log.e(TAG, "Invalid USB TCP message length: $msgLen")
+                            break
                         }
-                        2 -> {
-                            if (body.size >= 8) {
-                                val bb = ByteBuffer.wrap(body).order(ByteOrder.BIG_ENDIAN)
-                                val w = bb.int; val h = bb.int
-                                if (w > 0 && h > 0) onWindowsSize?.invoke(w, h)
-                                if (body.size >= 12) onMode?.invoke(bb.int)
+                        val payload = ByteArray(msgLen)
+                        input.readFully(payload)
+                        val type = payload[0].toInt() and 0xFF
+                        val body = if (msgLen > 1) payload.copyOfRange(1, msgLen) else ByteArray(0)
+                        Log.d(TAG, "USB TCP received type=$type payload=${body.size}")
+
+                        when (type) {
+                            1 -> {
+                                Log.i(TAG, "Decoder started (codec config)")
+                                decoder.configure(body)
                             }
-                        }
-                        3 -> {
-                            if (body.size >= 8) {
-                                val bb = ByteBuffer.wrap(body).order(ByteOrder.BIG_ENDIAN)
-                                val nx = bb.float; val ny = bb.float
-                                val cursorType = if (body.size >= 9) (body[8].toInt() and 0xFF) else 0
-                                onCursorPos?.invoke(nx, ny, cursorType)
+                            2 -> {
+                                if (body.size >= 8) {
+                                    val bb = ByteBuffer.wrap(body).order(ByteOrder.BIG_ENDIAN)
+                                    val w = bb.int; val h = bb.int
+                                    if (w > 0 && h > 0) onWindowsSize?.invoke(w, h)
+                                    if (body.size >= 12) onMode?.invoke(bb.int)
+                                }
                             }
-                        }
-                        0 -> {
-                            videoPackets++
-                            if (videoPackets == 1L || videoPackets % 120L == 0L) {
-                                Log.d(TAG, "Received frame packet (count=$videoPackets, bytes=${body.size})")
+                            3 -> {
+                                if (body.size >= 8) {
+                                    val bb = ByteBuffer.wrap(body).order(ByteOrder.BIG_ENDIAN)
+                                    val nx = bb.float; val ny = bb.float
+                                    val cursorType = if (body.size >= 9) (body[8].toInt() and 0xFF) else 0
+                                    onCursorPos?.invoke(nx, ny, cursorType)
+                                }
                             }
-                            val kf = isLikelyKeyframe(body)
-                            decoder.decode(body, kf)
+                            0 -> {
+                                videoPackets++
+                                if (videoPackets == 1L || videoPackets % 120L == 0L) {
+                                    Log.d(TAG, "Received frame packet (count=$videoPackets, bytes=${body.size})")
+                                }
+                                val kf = isLikelyKeyframe(body)
+                                decoder.decode(body, kf)
+                            }
+                            else -> Log.w(TAG, "Unknown USB TCP payload type=$type len=$msgLen")
                         }
-                        else -> Log.w(TAG, "Unknown USB TCP payload type=$type len=$msgLen")
                     }
+
+                } catch (e: Exception) {
+                    Log.w(TAG, "USB TCP disconnected: ${e.message} — retrying...")
+                    if (isRunning) onStatus("Reconnecting\u2026")
+                } finally {
+                    activeSocket = null
+                    try { socket?.close() } catch (_: Exception) {}
                 }
-            } catch (e: Exception) {
-                if (isRunning) onStatus("USB TCP error: ${e.message}")
-            } finally {
-                activeSocket = null
-                try { socket?.close() } catch (_: Exception) {}
-            }
+
+                // Delay sebelum retry reconnect
+                if (isRunning) {
+                    try { Thread.sleep(500) } catch (_: InterruptedException) {}
+                }
+            }  // ← end outer retry loop
         }
     }
 
