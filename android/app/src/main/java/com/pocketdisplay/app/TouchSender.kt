@@ -53,20 +53,23 @@ open class TouchSender(
         const val MENU        = 0x12  // Alt
     }
 
-    private val udpSocket  = if (!useTcp) DatagramSocket() else null
-    private val targetAddr = if (!useTcp) InetAddress.getByName(targetIp) else null
+    private val udpSocket    = if (!useTcp) DatagramSocket() else null
+    private val targetAddr   = if (!useTcp) InetAddress.getByName(targetIp) else null
     private var tcpSocket: Socket? = null
-    private val executor   = Executors.newSingleThreadExecutor()
+    private val executor     = Executors.newSingleThreadExecutor()
+    // ACK may arrive before the touch socket connects; buffer it and flush on connect.
+    @Volatile private var pendingAck = false
+    @Volatile private var closed    = false
 
     init {
         if (useTcp) {
-            // Windows starts listening on :7778 only after the stream TCP socket is accepted.
-            // Without retries the first connect often races and fails silently (no ACK / touch).
+            // Retry indefinitely until connected or close() is called.
+            // Windows starts TouchReceiver *after* encoding init, so the first few
+            // attempts will fail; keeping this loop alive prevents the 16-second
+            // hard limit that caused the Android-first ACK deadlock.
             executor.submit {
                 val addr = InetSocketAddress(InetAddress.getByName(targetIp), port)
-                var attempts = 0
-                while (attempts < 80) {
-                    attempts++
+                while (!closed) {
                     var s: Socket? = null
                     try {
                         s = Socket()
@@ -74,7 +77,12 @@ open class TouchSender(
                         s.connect(addr, 600)
                         tcpSocket = s
                         Log.i("PocketDisplay", "Touch TCP connected to $targetIp:$port")
-                        break
+                        // Flush any ACK that arrived before the connection was ready.
+                        if (pendingAck) {
+                            pendingAck = false
+                            rawSend(buildAckPacket())
+                        }
+                        break  // connected — stop retrying
                     } catch (_: Exception) {
                         try { s?.close() } catch (_: Exception) {}
                         Thread.sleep(200)
@@ -119,16 +127,25 @@ open class TouchSender(
         }
     }
 
+    private fun buildAckPacket(): ByteArray {
+        val buf = ByteBuffer.allocate(16).order(ByteOrder.BIG_ENDIAN)
+        buf.put('P'.code.toByte()).put('D'.code.toByte())
+           .put('T'.code.toByte()).put('I'.code.toByte())
+        buf.put(8.toByte())                   // CODEC_READY_ACK
+        buf.put(0); buf.put(0); buf.put(0)    // reserved
+        buf.putLong(0)                        // bytes [8-15]: padding
+        return buf.array()
+    }
+
     /** Notify Windows that Android's codec is ready (type 8). */
     fun sendAck() {
         executor.submit {
-            val buf = ByteBuffer.allocate(16).order(ByteOrder.BIG_ENDIAN)
-            buf.put('P'.code.toByte()).put('D'.code.toByte())
-               .put('T'.code.toByte()).put('I'.code.toByte())
-            buf.put(8.toByte())                   // CODEC_READY_ACK
-            buf.put(0); buf.put(0); buf.put(0)    // reserved
-            buf.putLong(0)                        // bytes [8-15]: padding
-            rawSend(buf.array())
+            if (tcpSocket != null) {
+                rawSend(buildAckPacket())
+            } else {
+                // Touch socket not yet connected; buffer and flush when it connects.
+                pendingAck = true
+            }
         }
     }
 
@@ -160,6 +177,7 @@ open class TouchSender(
     }
 
     fun close() {
+        closed = true
         executor.shutdown()
         udpSocket?.close()
         tcpSocket?.close()

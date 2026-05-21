@@ -40,9 +40,11 @@ class TcpStreamReceiver(
         isRunning = true
         Log.i(TAG, "Mode=USB host=$HOST transport=TCP port=$port")
         netThread = thread(name = "TcpStreamReceiver", isDaemon = true) {
+            // Outer reconnect loop: keeps retrying after disconnects.
             while (isRunning) {
                 var socket: Socket? = null
                 try {
+                    // Connect (retry until success or stopped).
                     while (isRunning && socket == null) {
                         try {
                             val s = Socket()
@@ -59,12 +61,11 @@ class TcpStreamReceiver(
                     Log.i(TAG, "TCP connected to $HOST:$port")
                     onSenderIp?.invoke(HOST)
 
+                    // Send mode selection as first message so Windows reads it before streaming.
                     if (modeToSend != null) {
-                        Log.i(TAG, "Sending mode to Windows: $modeToSend")
-                        socket.getOutputStream().write(
-                            "POCKETDISPLAY_MODE:$modeToSend\n".toByteArray(Charsets.US_ASCII))
+                        Log.i(TAG, "Sending mode: $modeToSend")
+                        socket.getOutputStream().write("POCKETDISPLAY_MODE:$modeToSend\n".toByteArray(Charsets.US_ASCII))
                         socket.getOutputStream().flush()
-                        Log.i(TAG, "Mode sent OK")
                     }
 
                     val input = DataInputStream(socket.getInputStream())
@@ -74,18 +75,17 @@ class TcpStreamReceiver(
                         input.readFully(lenBuf)
                         val msgLen = ByteBuffer.wrap(lenBuf).order(ByteOrder.BIG_ENDIAN).int
                         if (msgLen < 1 || msgLen > MAX_MESSAGE) {
-                            Log.e(TAG, "Invalid USB TCP message length: $msgLen")
+                            Log.e(TAG, "Invalid message length: $msgLen")
                             break
                         }
                         val payload = ByteArray(msgLen)
                         input.readFully(payload)
                         val type = payload[0].toInt() and 0xFF
                         val body = if (msgLen > 1) payload.copyOfRange(1, msgLen) else ByteArray(0)
-                        Log.d(TAG, "USB TCP received type=$type payload=${body.size}")
 
                         when (type) {
                             1 -> {
-                                Log.i(TAG, "Decoder started (codec config)")
+                                Log.i(TAG, "Codec config received")
                                 decoder.configure(body)
                             }
                             2 -> {
@@ -106,26 +106,23 @@ class TcpStreamReceiver(
                             }
                             0 -> {
                                 videoPackets++
-                                if (videoPackets == 1L || videoPackets % 120L == 0L) {
-                                    Log.d(TAG, "Received frame packet (count=$videoPackets, bytes=${body.size})")
-                                }
                                 val kf = isLikelyKeyframe(body)
                                 decoder.decode(body, kf)
                             }
-                            else -> Log.w(TAG, "Unknown USB TCP payload type=$type len=$msgLen")
+                            else -> Log.w(TAG, "Unknown type=$type len=$msgLen")
                         }
                     }
-
                 } catch (e: Exception) {
-                    Log.w(TAG, "USB TCP disconnected: ${e.message} — retrying...")
-                    if (isRunning) onStatus("Reconnecting\u2026")
+                    if (isRunning) Log.w(TAG, "TCP read error: ${e.message}")
                 } finally {
                     activeSocket = null
                     try { socket?.close() } catch (_: Exception) {}
-                    decoder.resetForReconnect()
+                    // Release decoder so it re-configures cleanly on next connect.
+                    decoder.release()
                 }
-
+                // Brief pause before reconnect attempt.
                 if (isRunning) {
+                    onStatus("USB: reconnecting\u2026")
                     try { Thread.sleep(500) } catch (_: InterruptedException) {}
                 }
             }

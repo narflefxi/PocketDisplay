@@ -19,6 +19,14 @@ class VideoDecoder(
     private var lastSpsData: ByteArray? = null
 
     fun configure(spsData: ByteArray) {
+        if (lastSpsData != null && spsData.contentEquals(lastSpsData!!)) {
+            // Duplicate config (Windows resend_thread keeps sending until it gets ACK).
+            // Re-invoke onConfigured so the ACK is retried — without this the handshake
+            // deadlocks: decoder already running so we don't reconfigure, but Windows never
+            // gets the ACK and never sends video frames.
+            if (running) onConfigured?.invoke()
+            return
+        }
         lastSpsData = spsData.copyOf()
         release()
         try {
