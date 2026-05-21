@@ -18,17 +18,17 @@ class VideoDecoder(
     @Volatile private var firstFrameDispatched = false
     private var lastSpsData: ByteArray? = null
 
-    fun configure(spsData: ByteArray) {
+    fun configure(spsData: ByteArray, hintW: Int = 0, hintH: Int = 0) {
+        // Deduplication: same SPS + decoder already running → re-send ACK only
+        // (Windows resend_thread keeps re-sending until it receives the ACK).
         if (lastSpsData != null && spsData.contentEquals(lastSpsData!!)) {
-            // Duplicate config (Windows resend_thread keeps sending until it gets ACK).
-            // Re-invoke onConfigured so the ACK is retried — without this the handshake
-            // deadlocks: decoder already running so we don't reconfigure, but Windows never
-            // gets the ACK and never sends video frames.
             if (running) onConfigured?.invoke()
             return
         }
-        lastSpsData = spsData.copyOf()
-        release()
+
+        release()  // stop previous codec; also clears lastSpsData
+
+        var c: MediaCodec? = null
         try {
             val (sps, pps) = parseSpsAndPps(spsData)
             if (sps == null) {
@@ -36,7 +36,13 @@ class VideoDecoder(
                 return
             }
 
-            val format = MediaFormat.createVideoFormat("video/avc", 1, 1)
+            // Use actual stream dimensions from the Windows stream-info packet.
+            // KEY_WIDTH=1/KEY_HEIGHT=1 (previous hint) is below one H.264 macroblock
+            // (16x16) and causes c2.android.avc.decoder to reject configure() with
+            // EINVAL (0xffffffea).  Fall back to 1280x720 only if dimensions unknown.
+            val w = if (hintW > 0) hintW else 1280
+            val h = if (hintH > 0) hintH else 720
+            val format = MediaFormat.createVideoFormat("video/avc", w, h)
             format.setByteBuffer("csd-0", ByteBuffer.wrap(sps))
             if (pps != null) format.setByteBuffer("csd-1", ByteBuffer.wrap(pps))
 
@@ -44,16 +50,21 @@ class VideoDecoder(
                 format.setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
             }
 
-            val c = MediaCodec.createDecoderByType("video/avc")
+            c = MediaCodec.createDecoderByType("video/avc")
             c.configure(format, surface, null, 0)
             c.start()
             codec                = c
+            c                    = null  // ownership transferred; don't release in catch
             running              = true
             firstFrameDispatched = false
             startOutputDrain()
+            // Set AFTER success so dedup correctly re-ACKs on Windows resend;
+            // if configure fails, lastSpsData stays null and the next resend retries.
+            lastSpsData = spsData.copyOf()
             onStatus("Decoder ready")
             onConfigured?.invoke()
         } catch (e: Exception) {
+            try { c?.release() } catch (_: Exception) {}  // prevent resource leak
             onStatus("Decoder error: ${e.message}")
         }
     }

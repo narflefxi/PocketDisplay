@@ -34,6 +34,10 @@ class TcpStreamReceiver(
     private val decoder = VideoDecoder(surface, onStatus, onDimensions, onCodecConfigured, onFirstFrame)
 
     private var videoPackets = 0L
+    // Stream dimensions received from Windows type-2 (stream info) packet;
+    // forwarded to decoder.configure() so MediaFormat uses the correct size.
+    private var streamW = 0
+    private var streamH = 0
 
     fun start() {
         if (isRunning) return
@@ -58,6 +62,7 @@ class TcpStreamReceiver(
                     if (socket == null) break
 
                     activeSocket = socket
+                    streamW = 0; streamH = 0  // reset dims for fresh connection
                     Log.i(TAG, "TCP connected to $HOST:$port")
                     onSenderIp?.invoke(HOST)
 
@@ -85,14 +90,17 @@ class TcpStreamReceiver(
 
                         when (type) {
                             1 -> {
-                                Log.i(TAG, "Codec config received")
-                                decoder.configure(body)
+                                Log.i(TAG, "Codec config received (stream=${streamW}x${streamH})")
+                                decoder.configure(body, streamW, streamH)
                             }
                             2 -> {
                                 if (body.size >= 8) {
                                     val bb = ByteBuffer.wrap(body).order(ByteOrder.BIG_ENDIAN)
                                     val w = bb.int; val h = bb.int
-                                    if (w > 0 && h > 0) onWindowsSize?.invoke(w, h)
+                                    if (w > 0 && h > 0) {
+                                        streamW = w; streamH = h
+                                        onWindowsSize?.invoke(w, h)
+                                    }
                                     if (body.size >= 12) onMode?.invoke(bb.int)
                                 }
                             }
