@@ -614,23 +614,31 @@ int main(int argc, char* argv[]) {
     // ── Codec config resend thread ────────────────────────────────────────────
 
     std::atomic<bool> android_ready{false};
+    std::atomic<int>  connect_attempt{0};  // incremented on every (re)connect
     // Reset android_ready on every reconnect (after the first WaitForMode connection)
     // so resend_thread re-sends codec config.  Without this, android_ready stays true
     // after Android disconnects and the decoder never reconfigures on reconnect.
-    if (usb_server) {
-        usb_server->s.SetReconnectCallback([&]() {
-            android_ready.store(false);
+    // usb_server was moved into streamer above; cast back to reach TcpVideoServer.
+    if (usb_mode) {
+        auto* tcp = static_cast<TcpVideoServerWrap*>(streamer.get());
+        tcp->s.SetReconnectCallback([&]() {
+            const int attempt = connect_attempt.fetch_add(1) + 1;
+            const bool was_ready = android_ready.exchange(false);
             SetColor(YELLOW);
-            std::cout << "  [USB/video] Android reconnected \u2014 resetting codec handshake.\n";
+            std::cout << "\n[DBG] ==> RECONNECT attempt #" << attempt
+                      << "  android_ready was=" << (was_ready ? "true" : "false")
+                      << " -> now FALSE  (resend_thread will send codec config)\n";
             ResetColor();
         });
     }
     touch.SetAckCallback([&]() {
+        const int attempt = connect_attempt.load();
         android_ready = true;
         g_gui.connected.store(true);
-        strncpy_s(g_gui.statusMsg, "Android ready — streaming", 255);
+        strncpy_s(g_gui.statusMsg, "Android ready \u2014 streaming", 255);
         SetColor(GREEN);
-        std::cout << "\n  Android ready — codec confirmed.\n";
+        std::cout << "\n[DBG] ==> ACK received on attempt #" << attempt
+                  << "  android_ready -> TRUE  (video frames will flow)\n";
         ResetColor();
     });
 
@@ -644,7 +652,10 @@ int main(int argc, char* argv[]) {
     std::thread resend_thread([&]() {
         while (g_running) {
             if (!android_ready) {
-                // ← FIX: kirim stream info + codec config setiap cycle sampai Android ACK
+                const int attempt = connect_attempt.load();
+                std::cout << "[DBG] resend_thread: android_ready=false attempt=#" << attempt
+                          << "  sending stream_info...\n";
+
                 uint8_t dims[12];
                 const uint32_t sw = htonl(static_cast<uint32_t>(cap_w));
                 const uint32_t sh = htonl(static_cast<uint32_t>(cap_h));
@@ -652,13 +663,22 @@ int main(int argc, char* argv[]) {
                 std::memcpy(dims,     &sw, 4);
                 std::memcpy(dims + 4, &sh, 4);
                 std::memcpy(dims + 8, &sf, 4);
-                streamer->SendFrame(dims, 12, 0, pocketdisplay::FLAG_STREAM_INFO);
+                const bool si_ok = streamer->SendFrame(dims, 12, 0, pocketdisplay::FLAG_STREAM_INFO);
+                std::cout << "[DBG] resend_thread: stream_info send="
+                          << (si_ok ? "OK" : "FAILED") << "\n";
 
                 std::vector<uint8_t> sps_pps;
                 if (encoder->GetConfigPacket(sps_pps) && !sps_pps.empty()) {
-                    streamer->SendFrame(sps_pps.data(), sps_pps.size(),
+                    const bool cc_ok = streamer->SendFrame(sps_pps.data(), sps_pps.size(),
                                         0, pocketdisplay::FLAG_CODEC_CONFIG);
+                    std::cout << "[DBG] resend_thread: codec_config (" << sps_pps.size()
+                              << " bytes) send=" << (cc_ok ? "OK" : "FAILED") << "\n";
+                } else {
+                    std::cout << "[DBG] resend_thread: GetConfigPacket returned empty\n";
                 }
+            } else {
+                std::cout << "[DBG] resend_thread: android_ready=true attempt=#"
+                          << connect_attempt.load() << "  skipping send\n";
             }
 
             for (int i = 0; i < 20 && g_running; ++i)
