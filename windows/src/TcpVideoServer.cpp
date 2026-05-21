@@ -121,6 +121,9 @@ void TcpVideoServer::AcceptLoop() {
             if (client_sock_ != INVALID_SOCKET) closesocket(client_sock_);
             client_sock_ = c;
         }
+        // Notify main that Android (re)connected — lets it reset android_ready
+        // so the resend_thread re-sends codec config on every new connection.
+        if (reconnect_cb_) reconnect_cb_();
     }
 }
 

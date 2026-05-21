@@ -7,6 +7,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <thread>
 
@@ -40,6 +41,9 @@ public:
     // Maps legacy PDSM SendFrame flags to USB TCP messages. Drops if no client yet.
     bool SendFrame(const uint8_t* data, size_t size, uint32_t frame_id, uint8_t flags);
 
+    // Called each time Android (re)connects — use to reset android_ready.
+    void SetReconnectCallback(std::function<void()> cb) { reconnect_cb_ = std::move(cb); }
+
     void Close();
 
 private:
@@ -51,6 +55,7 @@ private:
     std::mutex          client_mu_;
     std::thread         accept_thread_;
     std::atomic<bool>   running_{false};
+    std::function<void()> reconnect_cb_;
 
     std::mutex              mode_mu_;
     std::condition_variable mode_cv_;

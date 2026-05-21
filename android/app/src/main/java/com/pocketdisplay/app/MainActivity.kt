@@ -291,14 +291,16 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     }
 
     private fun onWindowsIpKnown(ip: String) {
-        if (touchSender == null) {
-            val senderIp = if (usbMode) "127.0.0.1" else ip
-            touchSender = if (usbMode) TcpTouchSender(senderIp) else TouchSender(senderIp, useTcp = false)
-            runOnUiThread {
-                binding.hudIp.text = if (usbMode) "USB" else ip
-                setStatusDot(connected = true)
-                updateStatus(if (usbMode) "Streaming via USB" else "Streaming via WiFi ↔ $ip")
-            }
+        // Always close the old sender and create a fresh one for each new connection.
+        // The old if(touchSender == null) guard caused sendAck() to silently drop on
+        // reconnect because the previous tcpSocket was dead (Windows restarted).
+        touchSender?.close()
+        val senderIp = if (usbMode) "127.0.0.1" else ip
+        touchSender = if (usbMode) TcpTouchSender(senderIp) else TouchSender(senderIp, useTcp = false)
+        runOnUiThread {
+            binding.hudIp.text = if (usbMode) "USB" else ip
+            setStatusDot(connected = true)
+            updateStatus(if (usbMode) "Streaming via USB" else "Streaming via WiFi ↔ $ip")
         }
     }
 

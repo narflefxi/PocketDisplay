@@ -614,6 +614,17 @@ int main(int argc, char* argv[]) {
     // ── Codec config resend thread ────────────────────────────────────────────
 
     std::atomic<bool> android_ready{false};
+    // Reset android_ready on every reconnect (after the first WaitForMode connection)
+    // so resend_thread re-sends codec config.  Without this, android_ready stays true
+    // after Android disconnects and the decoder never reconfigures on reconnect.
+    if (usb_server) {
+        usb_server->s.SetReconnectCallback([&]() {
+            android_ready.store(false);
+            SetColor(YELLOW);
+            std::cout << "  [USB/video] Android reconnected \u2014 resetting codec handshake.\n";
+            ResetColor();
+        });
+    }
     touch.SetAckCallback([&]() {
         android_ready = true;
         g_gui.connected.store(true);
