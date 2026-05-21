@@ -650,6 +650,11 @@ int main(int argc, char* argv[]) {
     strncpy_s(g_gui.statusMsg, "Waiting for Android…", 255);
 
     std::thread resend_thread([&]() {
+        // Wait 500 ms before first send so the TcpTouchSender connect thread on
+        // Android has time to establish the 7778 socket.  Without this, codec
+        // config arrives before tcpSocket is set and sendAck() falls back to the
+        // pendingAck path, which has a rawSend race on first connection.
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
         while (g_running) {
             if (!android_ready) {
                 const int attempt = connect_attempt.load();
