@@ -149,9 +149,7 @@ bool TcpVideoServer::SendFrame(const uint8_t* data, size_t size, uint32_t /*fram
                       << " codec_config payload=" << size << "\n";
             break;
         case kVideo:
-            std::cout << "  [USB/video] send type=" << static_cast<int>(t)
-                      << " video_frame payload=" << size << "\n";
-            break;
+            break;  // per-frame logging suppressed (too noisy at 60 fps)
         case kCursor:
             break;
     }

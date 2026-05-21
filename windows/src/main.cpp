@@ -615,6 +615,7 @@ int main(int argc, char* argv[]) {
 
     std::atomic<bool> android_ready{false};
     std::atomic<int>  connect_attempt{0};  // incremented on every (re)connect
+    std::atomic<bool> touch_socket_ready{false};
     // Reset android_ready on every reconnect (after the first WaitForMode connection)
     // so resend_thread re-sends codec config.  Without this, android_ready stays true
     // after Android disconnects and the decoder never reconfigures on reconnect.
@@ -631,6 +632,14 @@ int main(int argc, char* argv[]) {
             ResetColor();
         });
     }
+    // Signal resend_thread the moment Android's touch socket is accepted —
+    // replaces the unreliable 500ms fixed delay.
+    touch.SetConnectCallback([&]() {
+        touch_socket_ready.store(true);
+        SetColor(CYAN);
+        std::cout << "[DBG] touch socket accepted — resend_thread may now send codec config\n";
+        ResetColor();
+    });
     touch.SetAckCallback([&]() {
         const int attempt = connect_attempt.load();
         android_ready = true;
@@ -650,11 +659,13 @@ int main(int argc, char* argv[]) {
     strncpy_s(g_gui.statusMsg, "Waiting for Android…", 255);
 
     std::thread resend_thread([&]() {
-        // Wait 500 ms before first send so the TcpTouchSender connect thread on
-        // Android has time to establish the 7778 socket.  Without this, codec
-        // config arrives before tcpSocket is set and sendAck() falls back to the
-        // pendingAck path, which has a rawSend race on first connection.
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        // Wait until TouchReceiver has accepted Android's touch socket before
+        // sending codec config.  This replaces the unreliable 500ms fixed delay:
+        // sendAck() will find tcpSocket != null and send the ACK directly instead
+        // of relying on the pendingAck flush which can silently lose the packet.
+        while (g_running && !touch_socket_ready.load())
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        std::cout << "[DBG] resend_thread: touch socket ready — starting codec handshake\n";
         while (g_running) {
             if (!android_ready) {
                 const int attempt = connect_attempt.load();

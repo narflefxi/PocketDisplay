@@ -22,6 +22,9 @@ public:
     // Called once when Android sends a codec-ready ACK (touch packet type 8).
     void SetAckCallback(std::function<void()> cb) { ack_cb_ = std::move(cb); }
 
+    // Called each time Android connects (or reconnects) on the touch socket.
+    void SetConnectCallback(std::function<void()> cb) { connect_cb_ = std::move(cb); }
+
     // Enable extended-display coordinate mapping for touch injection.
     // rect is the monitor's desktop coordinates (from DXGI_OUTPUT_DESC).
     void SetExtendedMonitor(RECT rect) { extended_mode_ = true; mon_rect_ = rect; }
@@ -36,6 +39,7 @@ private:
     void InjectVirtualKey(uint16_t vk, bool key_down) const;
 
     std::function<void()> ack_cb_;
+    std::function<void()> connect_cb_;
     SOCKET            sock_         = INVALID_SOCKET;
     std::thread       thread_;
     std::atomic<bool> running_{false};

@@ -128,6 +128,7 @@ void TouchReceiver::TcpAcceptLoop() {
                                &addr_len);
         if (client == INVALID_SOCKET) break;
         std::cout << "[touch/TCP] Android connected\n";
+        if (connect_cb_) connect_cb_();
         TcpClientLoop(client);
         closesocket(client);
         std::cout << "[touch/TCP] Android disconnected\n";
