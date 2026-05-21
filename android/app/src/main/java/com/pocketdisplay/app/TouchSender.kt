@@ -58,16 +58,17 @@ open class TouchSender(
     private var tcpSocket: Socket? = null
     private val executor     = Executors.newSingleThreadExecutor()
     // ACK may arrive before the touch socket connects; buffer it and flush on connect.
-    @Volatile private var pendingAck = false
-    @Volatile private var closed    = false
+    @Volatile private var pendingAck  = false
+    @Volatile private var closed      = false
+    private var connectThread: Thread? = null
 
     init {
         if (useTcp) {
-            // Retry indefinitely until connected or close() is called.
-            // Windows starts TouchReceiver *after* encoding init, so the first few
-            // attempts will fail; keeping this loop alive prevents the 16-second
-            // hard limit that caused the Android-first ACK deadlock.
-            executor.submit {
+            // IMPORTANT: run the connect loop in a dedicated daemon thread, NOT inside
+            // executor.submit().  The executor is a single-thread pool; submitting an
+            // infinite retry loop to it permanently blocks the queue — sendAck() and
+            // all touch/keyboard tasks would wait forever and never execute.
+            val t = Thread({
                 val addr = InetSocketAddress(InetAddress.getByName(targetIp), port)
                 while (!closed) {
                     var s: Socket? = null
@@ -77,18 +78,24 @@ open class TouchSender(
                         s.connect(addr, 600)
                         tcpSocket = s
                         Log.i("PocketDisplay", "Touch TCP connected to $targetIp:$port")
-                        // Flush any ACK that arrived before the connection was ready.
-                        if (pendingAck) {
-                            pendingAck = false
-                            rawSend(buildAckPacket())
+                        // Flush any ACK buffered before connection was ready.
+                        // Submit via executor so it runs after any queued sends.
+                        executor.submit {
+                            if (pendingAck) {
+                                pendingAck = false
+                                rawSend(buildAckPacket())
+                            }
                         }
                         break  // connected — stop retrying
                     } catch (_: Exception) {
                         try { s?.close() } catch (_: Exception) {}
-                        Thread.sleep(200)
+                        try { Thread.sleep(200) } catch (_: InterruptedException) { break }
                     }
                 }
-            }
+            }, "TouchSender-Connect")
+            t.isDaemon = true
+            t.start()
+            connectThread = t
         }
     }
 
@@ -178,6 +185,7 @@ open class TouchSender(
 
     fun close() {
         closed = true
+        connectThread?.interrupt()
         executor.shutdown()
         udpSocket?.close()
         tcpSocket?.close()
