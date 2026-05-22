@@ -376,12 +376,17 @@ struct TcpVideoServerWrap : IStreamer {
 
 static std::pair<int,int> CalcVddResolution(int and_w, int and_h) {
     if (and_w <= 0 || and_h <= 0) return {0, 0};
-    const double ratio = static_cast<double>(and_w) / and_h;
-    constexpr int heights[] = {1200, 1080, 900, 800, 768, 720, 600};
+    int target_w = (and_w + 1) & ~1;
+    int target_h = (and_h + 1) & ~1;
+    if (target_w >= 640 && target_h >= 480 && target_w <= 3200 && target_h <= 1800)
+        return {target_w, target_h};
+
+    const double ratio = static_cast<double>(target_w) / target_h;
+    constexpr int heights[] = {1440, 1200, 1080, 900, 800, 768, 720, 600};
     for (int h : heights) {
         int w = static_cast<int>(h * ratio + 0.5);
         w = (w + 1) & ~1;  // round to even
-        if (w >= 640 && w <= 1920) return {w, h};
+        if (w >= 640 && w <= 3200) return {w, h};
     }
     return {1280, 720};
 }
@@ -447,7 +452,7 @@ int main(int argc, char* argv[]) {
     std::string target_ip;
     uint16_t port         = pocketdisplay::DEFAULT_PORT;
     uint16_t touch_port   = 7778;
-    int      bitrate_kbps = 15000;
+    int      bitrate_kbps = 30000;
     int      target_fps   = 60;
 
     for (int i = 1; i < argc; ++i) {
@@ -463,7 +468,7 @@ int main(int argc, char* argv[]) {
         else if (arg[0] != '-' && target_ip.empty()) target_ip = arg;
         else if (arg[0] != '-' && !target_ip.empty()) {
             if (port == pocketdisplay::DEFAULT_PORT) port = static_cast<uint16_t>(std::stoi(arg));
-            else if (bitrate_kbps == 15000)          bitrate_kbps = std::stoi(arg);
+            else if (bitrate_kbps == 30000)          bitrate_kbps = std::stoi(arg);
             else if (target_fps == 60)               target_fps   = std::stoi(arg);
         }
     }

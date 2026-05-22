@@ -10,8 +10,8 @@ bool Encoder::Initialize(int width, int height, int fps, int bitrate_kbps) {
     height_ = height;
 
     x264_param_t param;
-    // veryfast + zerolatency keeps delay low but gives x264 enough tools to reduce blockiness.
-    if (x264_param_default_preset(&param, "veryfast", "zerolatency") < 0) return false;
+    // fast + zerolatency improves desktop/text clarity while keeping encoder buffering off.
+    if (x264_param_default_preset(&param, "fast", "zerolatency") < 0) return false;
 
     param.i_width          = width;
     param.i_height         = height;
@@ -20,13 +20,13 @@ bool Encoder::Initialize(int width, int height, int fps, int bitrate_kbps) {
     param.i_keyint_max     = fps * 2;   // force keyframe every 2 s for reconnect recovery
     param.rc.i_rc_method   = X264_RC_ABR;
     param.rc.i_bitrate     = bitrate_kbps;
-    param.rc.i_vbv_max_bitrate = bitrate_kbps;
-    param.rc.i_vbv_buffer_size = bitrate_kbps / 2;
+    param.rc.i_vbv_max_bitrate = bitrate_kbps * 2;
+    param.rc.i_vbv_buffer_size = bitrate_kbps;
     param.b_annexb         = 1;
     param.b_repeat_headers = 1;         // embed SPS/PPS in every keyframe for resilience
     param.i_log_level      = X264_LOG_NONE;
 
-    if (x264_param_apply_profile(&param, "main") < 0) return false;
+    if (x264_param_apply_profile(&param, "high") < 0) return false;
 
     handle_ = x264_encoder_open(&param);
     if (!handle_) return false;
