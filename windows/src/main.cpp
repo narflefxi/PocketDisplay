@@ -670,17 +670,6 @@ int main(int argc, char* argv[]) {
     ResetColor();
 
     TouchReceiver touch;
-    if (touch.Start(touch_port, usb_mode)) {
-        SetColor(GREEN);
-        std::cout << "      Listening on " << (usb_mode ? "TCP" : "UDP")
-                  << " :" << touch_port << "\n";
-        ResetColor();
-    } else {
-        SetColor(YELLOW);
-        std::cout << "      WARNING: Could not start touch receiver (non-fatal)\n";
-        ResetColor();
-    }
-    if (extended) touch.SetExtendedMonitor(capture.GetMonitorRect());
 
     // ── Codec config resend thread ────────────────────────────────────────────
 
@@ -703,8 +692,11 @@ int main(int argc, char* argv[]) {
             ResetColor();
         });
     }
-    // Signal resend_thread the moment Android's touch socket is accepted —
-    // replaces the unreliable 500ms fixed delay.
+    // IMPORTANT: register callbacks BEFORE touch.Start() opens the port.
+    // If Android launched before Windows, TcpTouchSender is already retrying.
+    // Start() opens the port; Android can connect and fire TcpAcceptLoop in the
+    // tiny gap before SetConnectCallback() runs — connect_cb_ would be null,
+    // touch_socket_ready stays false, and resend_thread deadlocks forever.
     touch.SetConnectCallback([&]() {
         touch_socket_ready.store(true);
         SetColor(CYAN);
@@ -721,6 +713,19 @@ int main(int argc, char* argv[]) {
                   << "  android_ready -> TRUE  (video frames will flow)\n";
         ResetColor();
     });
+
+    // Open the port now \u2014 callbacks already registered, no race window.
+    if (touch.Start(touch_port, usb_mode)) {
+        SetColor(GREEN);
+        std::cout << "      Listening on " << (usb_mode ? "TCP" : "UDP")
+                  << " :" << touch_port << "\n";
+        ResetColor();
+    } else {
+        SetColor(YELLOW);
+        std::cout << "      WARNING: Could not start touch receiver (non-fatal)\n";
+        ResetColor();
+    }
+    if (extended) touch.SetExtendedMonitor(capture.GetMonitorRect());
 
     const int cap_w = capture.GetWidth();
     const int cap_h = capture.GetHeight();
