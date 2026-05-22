@@ -234,7 +234,7 @@ bool HwEncoder::Initialize(int width, int height, int fps, int bitrate_kbps) {
     MFSetAttributeRatio(mt_out.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
     mt_out->SetUINT32(MF_MT_INTERLACE_MODE,  MFVideoInterlace_Progressive);
     mt_out->SetUINT32(MF_MT_AVG_BITRATE,     bitrate_kbps * 1000);
-    mt_out->SetUINT32(MF_MT_MPEG2_PROFILE,   66);  // H.264 Baseline = 66
+    mt_out->SetUINT32(MF_MT_MPEG2_PROFILE,   77);  // H.264 Main = 77
     mt_out->SetUINT32(MF_MT_VIDEO_NOMINAL_RANGE, MFNominalRange_16_235);
     encoder_->SetOutputType(0, mt_out.Get(), 0);
 

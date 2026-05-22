@@ -1,7 +1,5 @@
 package com.pocketdisplay.app
 
-import android.graphics.Matrix
-import android.graphics.RectF
 import android.graphics.SurfaceTexture
 import android.os.Bundle
 import android.os.Handler
@@ -266,6 +264,9 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         binding.videoLoadingCover.visibility = View.GONE
         binding.textureView.animate().cancel()
         binding.textureView.alpha = 1f
+        binding.textureView.scaleX = 1f
+        binding.textureView.scaleY = 1f
+        binding.textureView.rotation = 0f
         binding.textureView.removeCallbacks(applyFillTransformRunnable)
         receiver?.stop(); receiver = null
         tcpReceiver?.stop(); tcpReceiver = null
@@ -276,6 +277,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         modeDialogShowing = false
         selectedMode = "mirror"
         videoW = 0; videoH = 0; windowsW = 0; windowsH = 0
+        videoScaledW = 0f; videoScaledH = 0f; videoOffsetX = 0f; videoOffsetY = 0f
         binding.cursorOverlay.hide()
         binding.tvExtendedBadge.visibility = View.GONE
         binding.btnConnect.text = "Connect"
@@ -318,11 +320,11 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     }
 
     private fun onWindowsCursorPos(nx: Float, ny: Float, type: Int) {
-        val vw = binding.textureView.width.toFloat()
-        val vh = binding.textureView.height.toFloat()
+        val vw = if (videoScaledW > 0f) videoScaledW else binding.textureView.width.toFloat()
+        val vh = if (videoScaledH > 0f) videoScaledH else binding.textureView.height.toFloat()
         if (vw == 0f || vh == 0f) return
-        val sx = nx * vw
-        val sy = ny * vh
+        val sx = videoOffsetX + nx * vw
+        val sy = videoOffsetY + ny * vh
         runOnUiThread { binding.cursorOverlay.moveTo(sx, sy, type) }
     }
 
@@ -377,9 +379,6 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         if (bufW == 0f || bufH == 0f) return
         if (vw == 0f || vh == 0f) return
 
-        binding.textureView.setTransform(null)
-        binding.textureView.rotation = 180f
-
         // Same contain math for cursor overlay (Windows norm → view); use logical desktop
         // size when known so cursor matches GetCursorPos, even if the encoded frame is padded.
         val contentW = if (windowsW > 0) windowsW.toFloat() else bufW
@@ -394,6 +393,13 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         videoScaledH = scaledH
         videoOffsetX = offsetX
         videoOffsetY = offsetY
+
+        binding.textureView.pivotX = vw / 2f
+        binding.textureView.pivotY = vh / 2f
+        binding.textureView.scaleX = scaledW / vw
+        binding.textureView.scaleY = scaledH / vh
+        binding.textureView.setTransform(null)
+        binding.textureView.rotation = 180f
 
         if (!transformLogged) {
             transformLogged = true
@@ -578,18 +584,20 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     // ── Coordinate helpers ────────────────────────────────────────────────────
 
     private fun toNormalized(tx: Float, ty: Float): Pair<Float, Float> {
-        val vw = binding.textureView.width.toFloat()
-        val vh = binding.textureView.height.toFloat()
+        val vw = if (videoScaledW > 0f) videoScaledW else binding.textureView.width.toFloat()
+        val vh = if (videoScaledH > 0f) videoScaledH else binding.textureView.height.toFloat()
         if (vw == 0f || vh == 0f) return Pair(0f, 0f)
+        val x = ((tx - videoOffsetX) / vw).coerceIn(0f, 1f)
+        val y = ((ty - videoOffsetY) / vh).coerceIn(0f, 1f)
         // TextureView is rotated 180°; invert both axes so Windows coords are correct.
-        return Pair((1f - tx / vw).coerceIn(0f, 1f), (1f - ty / vh).coerceIn(0f, 1f))
+        return Pair(1f - x, 1f - y)
     }
 
     private fun toScreenPosition(nx: Float, ny: Float): Pair<Float, Float> {
-        val vw = binding.textureView.width.toFloat()
-        val vh = binding.textureView.height.toFloat()
+        val vw = if (videoScaledW > 0f) videoScaledW else binding.textureView.width.toFloat()
+        val vh = if (videoScaledH > 0f) videoScaledH else binding.textureView.height.toFloat()
         // Inverse of toNormalized: map Windows-normalized coords back to physical screen pixels.
-        return Pair((1f - nx) * vw, (1f - ny) * vh)
+        return Pair(videoOffsetX + (1f - nx) * vw, videoOffsetY + (1f - ny) * vh)
     }
 
     private fun moveCursorTo(p: Pair<Float, Float>) =
