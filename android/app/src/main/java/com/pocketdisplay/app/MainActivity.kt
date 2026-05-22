@@ -384,10 +384,11 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         val contentW = if (windowsW > 0) windowsW.toFloat() else bufW
         val contentH = if (windowsH > 0) windowsH.toFloat() else bufH
         val scale = minOf(vw / contentW, vh / contentH)
-        val scaledW = contentW * scale
-        val scaledH = contentH * scale
-        val offsetX = (vw - scaledW) / 2f
-        val offsetY = (vh - scaledH) / 2f
+        // Snap to integer pixels — fractional coordinates cause bilinear sub-pixel ghosting.
+        val scaledW = kotlin.math.round(contentW * scale).toFloat()
+        val scaledH = kotlin.math.round(contentH * scale).toFloat()
+        val offsetX = kotlin.math.round((vw - scaledW) / 2f).toFloat()
+        val offsetY = kotlin.math.round((vh - scaledH) / 2f).toFloat()
 
         videoScaledW = scaledW
         videoScaledH = scaledH

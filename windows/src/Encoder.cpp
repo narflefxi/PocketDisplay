@@ -13,6 +13,9 @@ bool Encoder::Initialize(int width, int height, int fps, int bitrate_kbps) {
     // fast + zerolatency improves desktop/text clarity while keeping encoder buffering off.
     if (x264_param_default_preset(&param, "fast", "zerolatency") < 0) return false;
 
+    // Screen content has hard edges (text, UI); deblocking smooths them into softness.
+    param.b_deblocking_filter = 0;
+
     param.i_width          = width;
     param.i_height         = height;
     param.i_fps_num        = static_cast<uint32_t>(fps);
