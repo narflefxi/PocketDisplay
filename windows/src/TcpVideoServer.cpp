@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstring>
 #include <iostream>
+#include <string>
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -105,8 +106,22 @@ void TcpVideoServer::AcceptLoop() {
             setsockopt(c, SOL_SOCKET, SO_RCVTIMEO,
                        reinterpret_cast<char*>(&zero), sizeof(zero));
 
-            const int val = (line.rfind("POCKETDISPLAY_MODE:", 0) == 0 &&
-                             line.substr(19) == "extend") ? 1 : 0;
+            // Parse: POCKETDISPLAY_MODE:<mode>[:<width>:<height>]
+            int val = 0, aW = 0, aH = 0;
+            if (line.rfind("POCKETDISPLAY_MODE:", 0) == 0) {
+                const std::string rest = line.substr(19);
+                const size_t p1 = rest.find(':');
+                const std::string mstr = (p1 == std::string::npos) ? rest : rest.substr(0, p1);
+                val = (mstr == "extend") ? 1 : 0;
+                if (p1 != std::string::npos) {
+                    const size_t p2 = rest.find(':', p1 + 1);
+                    if (p2 != std::string::npos) {
+                        try { aW = std::stoi(rest.substr(p1 + 1, p2 - p1 - 1)); } catch (...) {}
+                        try { aH = std::stoi(rest.substr(p2 + 1)); } catch (...) {}
+                    }
+                }
+            }
+            android_w_ = aW; android_h_ = aH;
             {
                 std::lock_guard<std::mutex> lk(mode_mu_);
                 if (mode_value_ < 0) mode_value_ = val;  // keep first

@@ -20,7 +20,9 @@ class TcpStreamReceiver(
     onCodecConfigured: (() -> Unit)? = null,
     onFirstFrame: (() -> Unit)? = null,
     private val onMode: ((Int) -> Unit)? = null,
-    private val modeToSend: String? = null
+    private val modeToSend: String? = null,
+    private val screenW: Int = 0,
+    private val screenH: Int = 0
 ) {
     companion object {
         private const val TAG = "PocketDisplay"
@@ -68,8 +70,9 @@ class TcpStreamReceiver(
 
                     // Send mode selection as first message so Windows reads it before streaming.
                     if (modeToSend != null) {
-                        Log.i(TAG, "Sending mode: $modeToSend")
-                        socket.getOutputStream().write("POCKETDISPLAY_MODE:$modeToSend\n".toByteArray(Charsets.US_ASCII))
+                        val dimSuffix = if (screenW > 0 && screenH > 0) ":$screenW:$screenH" else ""
+                        Log.i(TAG, "Sending mode: $modeToSend  screen=${screenW}x${screenH}")
+                        socket.getOutputStream().write("POCKETDISPLAY_MODE:$modeToSend$dimSuffix\n".toByteArray(Charsets.US_ASCII))
                         socket.getOutputStream().flush()
                     }
 

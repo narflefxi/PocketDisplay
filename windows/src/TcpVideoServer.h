@@ -44,6 +44,9 @@ public:
     // Called each time Android (re)connects — use to reset android_ready.
     void SetReconnectCallback(std::function<void()> cb) { reconnect_cb_ = std::move(cb); }
 
+    // Android screen dimensions from mode handshake (0 if not sent).
+    void GetAndroidSize(int& w, int& h) const { w = android_w_; h = android_h_; }
+
     void Close();
 
 private:
@@ -60,4 +63,6 @@ private:
     std::mutex              mode_mu_;
     std::condition_variable mode_cv_;
     int                     mode_value_ = -1;  // -1=waiting, 0=mirror, 1=extend
+    int                     android_w_  = 0;
+    int                     android_h_  = 0;
 };

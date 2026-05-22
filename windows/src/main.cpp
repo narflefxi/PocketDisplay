@@ -372,6 +372,57 @@ struct TcpVideoServerWrap : IStreamer {
     void Close() override { s.Close(); }
 };
 
+// ── VDD auto-resize helpers ──────────────────────────────────────────────────
+
+static std::pair<int,int> CalcVddResolution(int and_w, int and_h) {
+    if (and_w <= 0 || and_h <= 0) return {0, 0};
+    const double ratio = static_cast<double>(and_w) / and_h;
+    constexpr int heights[] = {1200, 1080, 900, 800, 768, 720, 600};
+    for (int h : heights) {
+        int w = static_cast<int>(h * ratio + 0.5);
+        w = (w + 1) & ~1;  // round to even
+        if (w >= 640 && w <= 1920) return {w, h};
+    }
+    return {1280, 720};
+}
+
+static bool SetVddResolution(int target_w, int target_h) {
+    for (DWORD i = 0; ; ++i) {
+        DISPLAY_DEVICEW dd = {}; dd.cb = sizeof(dd);
+        if (!EnumDisplayDevicesW(nullptr, i, &dd, 0)) break;
+        if (!(dd.StateFlags & DISPLAY_DEVICE_ACTIVE)) continue;
+        const bool is_virtual =
+            (dd.StateFlags & DISPLAY_DEVICE_MIRRORING_DRIVER) != 0
+            || wcsstr(dd.DeviceString, L"Virtual")  != nullptr
+            || wcsstr(dd.DeviceString, L"Indirect") != nullptr
+            || wcsstr(dd.DeviceString, L"IDD")      != nullptr
+            || wcsstr(dd.DeviceString, L"Dummy")    != nullptr;
+        if (!is_virtual) continue;
+        DEVMODEW cur = {}; cur.dmSize = sizeof(cur);
+        EnumDisplaySettingsW(dd.DeviceName, ENUM_CURRENT_SETTINGS, &cur);
+        DEVMODEW dm = {};
+        dm.dmSize             = sizeof(dm);
+        dm.dmPelsWidth        = static_cast<DWORD>(target_w);
+        dm.dmPelsHeight       = static_cast<DWORD>(target_h);
+        dm.dmBitsPerPel       = cur.dmBitsPerPel > 0 ? cur.dmBitsPerPel : 32;
+        dm.dmDisplayFrequency = cur.dmDisplayFrequency > 0 ? cur.dmDisplayFrequency : 60;
+        dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_BITSPERPEL | DM_DISPLAYFREQUENCY;
+        const LONG r = ChangeDisplaySettingsExW(dd.DeviceName, &dm, nullptr, 0, nullptr);
+        char dev[128] = {};
+        WideCharToMultiByte(CP_UTF8, 0, dd.DeviceName, -1, dev, sizeof(dev), nullptr, nullptr);
+        if (r == DISP_CHANGE_SUCCESSFUL) {
+            SetColor(GREEN);
+            std::cout << "[USB] VDD " << dev << " -> " << target_w << "x" << target_h << "\n";
+            ResetColor();
+            return true;
+        }
+        SetColor(YELLOW);
+        std::cout << "[USB] VDD " << dev << " resolution change failed (err=" << r << ")\n";
+        ResetColor();
+    }
+    return false;
+}
+
 // ── main ─────────────────────────────────────────────────────────────────────
 
 int main(int argc, char* argv[]) {
@@ -396,7 +447,7 @@ int main(int argc, char* argv[]) {
     std::string target_ip;
     uint16_t port         = pocketdisplay::DEFAULT_PORT;
     uint16_t touch_port   = 7778;
-    int      bitrate_kbps = 8000;
+    int      bitrate_kbps = 15000;
     int      target_fps   = 60;
 
     for (int i = 1; i < argc; ++i) {
@@ -412,7 +463,7 @@ int main(int argc, char* argv[]) {
         else if (arg[0] != '-' && target_ip.empty()) target_ip = arg;
         else if (arg[0] != '-' && !target_ip.empty()) {
             if (port == pocketdisplay::DEFAULT_PORT) port = static_cast<uint16_t>(std::stoi(arg));
-            else if (bitrate_kbps == 8000)           bitrate_kbps = std::stoi(arg);
+            else if (bitrate_kbps == 15000)          bitrate_kbps = std::stoi(arg);
             else if (target_fps == 60)               target_fps   = std::stoi(arg);
         }
     }
@@ -496,6 +547,21 @@ int main(int argc, char* argv[]) {
         SetColor(GREEN);
         std::cout << "[USB] Mode: " << (extend_mode ? "Extended" : "Mirror") << "\n";
         ResetColor();
+
+        if (extend_mode) {
+            int and_w = 0, and_h = 0;
+            usb_server->s.GetAndroidSize(and_w, and_h);
+            if (and_w > 0 && and_h > 0) {
+                SetColor(CYAN);
+                std::cout << "[USB] Android screen: " << and_w << "x" << and_h << "\n";
+                ResetColor();
+                const auto [vdd_w, vdd_h] = CalcVddResolution(and_w, and_h);
+                if (vdd_w > 0) {
+                    SetVddResolution(vdd_w, vdd_h);
+                    Sleep(800);  // let Windows settle before capture
+                }
+            }
+        }
     }
 
     const bool extended = extend_mode || monitor_num > 0;

@@ -215,6 +215,8 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
 
         val surface = Surface(st)
         if (usbMode) {
+            @Suppress("DEPRECATION")
+            val dm = android.util.DisplayMetrics().also { windowManager.defaultDisplay.getRealMetrics(it) }
             tcpReceiver = TcpStreamReceiver(
                 surface,
                 port              = StreamReceiver.PORT,
@@ -226,7 +228,9 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
                 onCodecConfigured = ::onCodecConfigured,
                 onFirstFrame      = ::onFirstFrame,
                 onMode            = ::onStreamMode,
-                modeToSend        = selectedMode
+                modeToSend        = selectedMode,
+                screenW           = dm.widthPixels,
+                screenH           = dm.heightPixels
             )
             tcpReceiver?.start()
         } else {
