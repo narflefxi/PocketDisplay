@@ -70,14 +70,27 @@ open class TouchSender(
             // all touch/keyboard tasks would wait forever and never execute.
             val t = Thread({
                 val addr = InetSocketAddress(InetAddress.getByName(targetIp), port)
+                Log.i("PocketDisplay", "[DBG#16] TouchSender connect thread started -> $targetIp:$port")
+                var attempt = 0
                 while (!closed) {
                     var s: Socket? = null
                     try {
+                        attempt++
+                        Log.i("PocketDisplay", "[DBG#16] Touch TCP connect attempt #$attempt -> $targetIp:$port")
                         s = Socket()
                         s.tcpNoDelay = true
                         s.connect(addr, 600)
+                        // Probe write: adb reverse can accept the Android-side connection
+                        // before Windows has opened PC port 7778, giving a phantom "success".
+                        // A write to such a phantom socket fails (broken pipe / connection
+                        // reset) once the adb tunnel realises the PC side is not listening.
+                        // SCROLL(0,0) is a no-op on Windows (zero-delta guards prevent any
+                        // input injection), so real connections are unaffected.
+                        Log.i("PocketDisplay", "[DBG#16] Touch TCP connected, probing real connection attempt #$attempt")
+                        s.getOutputStream().write(buildTouchPacket(EventType.SCROLL.code, 0f, 0f))
+                        // Probe succeeded — this is a real connection (Windows accepted it).
                         tcpSocket = s
-                        Log.i("PocketDisplay", "Touch TCP connected to $targetIp:$port")
+                        Log.i("PocketDisplay", "[DBG#16] Touch TCP probe OK — real connection on attempt #$attempt")
                         // Flush any ACK buffered before connection was ready.
                         // Submit via executor so it runs after any queued sends.
                         executor.submit {
@@ -87,11 +100,13 @@ open class TouchSender(
                             }
                         }
                         break  // connected — stop retrying
-                    } catch (_: Exception) {
+                    } catch (e: Exception) {
+                        Log.d("PocketDisplay", "[DBG#16] Touch TCP attempt #$attempt failed: ${e.message}")
                         try { s?.close() } catch (_: Exception) {}
                         try { Thread.sleep(200) } catch (_: InterruptedException) { break }
                     }
                 }
+                Log.i("PocketDisplay", "[DBG#16] TouchSender connect thread exiting (closed=$closed)")
             }, "TouchSender-Connect")
             t.isDaemon = true
             t.start()
