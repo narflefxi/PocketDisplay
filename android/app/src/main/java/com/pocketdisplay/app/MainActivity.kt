@@ -297,9 +297,12 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     }
 
     private fun onWindowsIpKnown(ip: String) {
+        Log.i(TAG, "[DBG#16] onWindowsIpKnown called ip=$ip usbMode=$usbMode touchSender=${if (touchSender == null) "null" else "exists"}")
         if (touchSender == null) {
             val senderIp = if (usbMode) "127.0.0.1" else ip
+            Log.i(TAG, "[DBG#16] Creating ${if (usbMode) "TcpTouchSender" else "TouchSender"} -> $senderIp:7778")
             touchSender = if (usbMode) TcpTouchSender(senderIp) else TouchSender(senderIp, useTcp = false)
+            Log.i(TAG, "[DBG#16] touchSender created, connect thread starting")
             runOnUiThread {
                 binding.hudIp.text = if (usbMode) "USB" else ip
                 setStatusDot(connected = true)

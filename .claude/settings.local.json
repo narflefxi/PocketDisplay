@@ -24,7 +24,19 @@
       "PowerShell($env:JAVA_HOME = \"C:\\\\Program Files\\\\Android\\\\Android Studio\\\\jbr\"; C:\\\\Projects\\\\PocketDisplay\\\\android\\\\gradlew.bat --project-dir C:\\\\Projects\\\\PocketDisplay\\\\android assembleDebug 2>&1 | Select-Object -Last 6)",
       "PowerShell($env:JAVA_HOME = \"C:\\\\Program Files\\\\Android\\\\Android Studio\\\\jbr\"; C:\\\\Projects\\\\PocketDisplay\\\\android\\\\gradlew.bat --project-dir C:\\\\Projects\\\\PocketDisplay\\\\android assembleDebug 2>&1 | Select-Object -Last 5)",
       "PowerShell(& \"C:\\\\Program Files\\\\CMake\\\\bin\\\\cmake.exe\" --build C:\\\\Projects\\\\PocketDisplay\\\\windows\\\\build --config Release 2>&1 | Select-Object -Last 5)",
-      "PowerShell(Stop-Process *)"
+      "PowerShell(Stop-Process *)",
+      "Bash(cmake *)",
+      "Bash(git *)",
+      "PowerShell($env:JAVA_HOME = \"C:\\\\Program Files\\\\Android\\\\Android Studio\\\\jbr\"; & \"C:\\\\Projects\\\\PocketDisplay\\\\android\\\\gradlew.bat\" --project-dir C:\\\\Projects\\\\PocketDisplay\\\\android assembleDebug 2>&1 | Select-Object -Last 10)",
+      "Bash(adb install *)",
+      "Bash(adb devices *)",
+      "PowerShell($env:JAVA_HOME = \"C:\\\\Program Files\\\\Android\\\\Android Studio\\\\jbr\"; & \"C:\\\\Projects\\\\PocketDisplay\\\\android\\\\gradlew.bat\" --project-dir C:\\\\Projects\\\\PocketDisplay\\\\android assembleDebug 2>&1 | Select-Object -Last 8)",
+      "Bash(adb logcat *)",
+      "Bash(Start-Process -FilePath \"C:\\\\Projects\\\\PocketDisplay\\\\windows\\\\build\\\\Release\\\\PocketDisplay.exe\" -ArgumentList \"--usb\" -RedirectStandardOutput \"C:\\\\Projects\\\\PocketDisplay\\\\win_log.txt\" -RedirectStandardError \"C:\\\\Projects\\\\PocketDisplay\\\\win_err.txt\" -NoNewWindow)",
+      "Bash(Write-Output \"launched\")",
+      "PowerShell(Start-Process -FilePath \"C:\\\\Projects\\\\PocketDisplay\\\\windows\\\\build\\\\Release\\\\PocketDisplay.exe\" -ArgumentList \"--usb\" -RedirectStandardOutput \"C:\\\\Projects\\\\PocketDisplay\\\\win_log.txt\" -RedirectStandardError \"C:\\\\Projects\\\\PocketDisplay\\\\win_err.txt\" -NoNewWindow; Write-Output \"launched\")",
+      "Bash(echo \"logcat started pid=$!\")",
+      "PowerShell(Remove-Item *)"
     ]
   }
 }

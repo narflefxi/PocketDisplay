@@ -66,7 +66,9 @@ class TcpStreamReceiver(
                     activeSocket = socket
                     streamW = 0; streamH = 0  // reset dims for fresh connection
                     Log.i(TAG, "TCP connected to $HOST:$port")
+                    Log.i(TAG, "[DBG#16] onSenderIp INVOKING — will create TcpTouchSender")
                     onSenderIp?.invoke(HOST)
+                    Log.i(TAG, "[DBG#16] onSenderIp RETURNED")
 
                     // Send mode selection as first message so Windows reads it before streaming.
                     if (modeToSend != null) {

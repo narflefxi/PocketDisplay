@@ -700,7 +700,7 @@ int main(int argc, char* argv[]) {
     touch.SetConnectCallback([&]() {
         touch_socket_ready.store(true);
         SetColor(CYAN);
-        std::cout << "[DBG] touch socket accepted — resend_thread may now send codec config\n";
+        std::cout << "[DBG#16] touch_socket_ready SET TRUE — TcpAcceptLoop accepted Android touch connection\n" << std::flush;
         ResetColor();
     });
     touch.SetAckCallback([&]() {
@@ -741,9 +741,15 @@ int main(int argc, char* argv[]) {
         // if the connect thread has already exited by the time the ACK is needed).
         // WiFi: UDP touch is connectionless — no wait needed, proceed immediately.
         if (usb_mode) {
-            while (g_running && !touch_socket_ready.load())
+            std::cout << "[DBG#16] resend_thread: ENTERING touch_socket_ready wait\n" << std::flush;
+            int wait_ticks = 0;
+            while (g_running && !touch_socket_ready.load()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(20));
-            std::cout << "[DBG] resend_thread: USB touch socket ready — starting codec handshake\n";
+                if (++wait_ticks % 100 == 0)  // every ~2 s
+                    std::cout << "[DBG#16] resend_thread: still waiting for touch_socket_ready ("
+                              << (wait_ticks * 20) << " ms elapsed)\n" << std::flush;
+            }
+            std::cout << "[DBG#16] resend_thread: touch_socket_ready=TRUE — starting codec handshake\n" << std::flush;
         }
         while (g_running) {
             if (!android_ready) {
