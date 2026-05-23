@@ -546,3 +546,51 @@
 05-23 19:29:44.224 22965 23038 I PocketDisplay: [DBG#16] onSenderIp RETURNED
 05-23 19:29:44.224 22965 23038 I PocketDisplay: Sending mode: extend  screen=2560x1600
 05-23 19:29:46.274 22965 23038 W PocketDisplay: TCP read error: null
+05-23 19:29:46.834 22965 23038 I PocketDisplay: TCP connected to 127.0.0.1:7777
+05-23 19:29:46.834 22965 23038 I PocketDisplay: [DBG#16] onSenderIp INVOKING — will create TcpTouchSender
+05-23 19:29:46.834 22965 23038 I PocketDisplay: [DBG#16] onWindowsIpKnown called ip=127.0.0.1 usbMode=true touchSender=exists
+05-23 19:29:46.834 22965 23038 I PocketDisplay: [DBG#16] onSenderIp RETURNED
+05-23 19:29:46.834 22965 23038 I PocketDisplay: Sending mode: extend  screen=2560x1600
+05-23 19:29:48.882 22965 23038 W PocketDisplay: TCP read error: null
+05-23 19:29:49.443 22965 23038 I PocketDisplay: TCP connected to 127.0.0.1:7777
+05-23 19:29:49.443 22965 23038 I PocketDisplay: [DBG#16] onSenderIp INVOKING — will create TcpTouchSender
+05-23 19:29:49.443 22965 23038 I PocketDisplay: [DBG#16] onWindowsIpKnown called ip=127.0.0.1 usbMode=true touchSender=exists
+05-23 19:29:49.443 22965 23038 I PocketDisplay: [DBG#16] onSenderIp RETURNED
+05-23 19:29:49.443 22965 23038 I PocketDisplay: Sending mode: extend  screen=2560x1600
+05-23 19:29:51.491 22965 23038 W PocketDisplay: TCP read error: null
+05-23 19:29:52.049 22965 23038 I PocketDisplay: TCP connected to 127.0.0.1:7777
+05-23 19:29:52.049 22965 23038 I PocketDisplay: [DBG#16] onSenderIp INVOKING — will create TcpTouchSender
+05-23 19:29:52.049 22965 23038 I PocketDisplay: [DBG#16] onWindowsIpKnown called ip=127.0.0.1 usbMode=true touchSender=exists
+05-23 19:29:52.049 22965 23038 I PocketDisplay: [DBG#16] onSenderIp RETURNED
+05-23 19:29:52.049 22965 23038 I PocketDisplay: Sending mode: extend  screen=2560x1600
+05-23 19:29:54.103 22965 23038 W PocketDisplay: TCP read error: null
+05-23 19:29:54.662 22965 23038 I PocketDisplay: TCP connected to 127.0.0.1:7777
+05-23 19:29:54.662 22965 23038 I PocketDisplay: [DBG#16] onSenderIp INVOKING — will create TcpTouchSender
+05-23 19:29:54.663 22965 23038 I PocketDisplay: [DBG#16] onWindowsIpKnown called ip=127.0.0.1 usbMode=true touchSender=exists
+05-23 19:29:54.663 22965 23038 I PocketDisplay: [DBG#16] onSenderIp RETURNED
+05-23 19:29:54.663 22965 23038 I PocketDisplay: Sending mode: extend  screen=2560x1600
+05-23 19:29:56.715 22965 23038 W PocketDisplay: TCP read error: null
+05-23 19:29:57.275 22965 23038 I PocketDisplay: TCP connected to 127.0.0.1:7777
+05-23 19:29:57.275 22965 23038 I PocketDisplay: [DBG#16] onSenderIp INVOKING — will create TcpTouchSender
+05-23 19:29:57.275 22965 23038 I PocketDisplay: [DBG#16] onWindowsIpKnown called ip=127.0.0.1 usbMode=true touchSender=exists
+05-23 19:29:57.275 22965 23038 I PocketDisplay: [DBG#16] onSenderIp RETURNED
+05-23 19:29:57.275 22965 23038 I PocketDisplay: Sending mode: extend  screen=2560x1600
+05-23 19:29:59.323 22965 23038 W PocketDisplay: TCP read error: null
+05-23 19:29:59.882 22965 23038 I PocketDisplay: TCP connected to 127.0.0.1:7777
+05-23 19:29:59.882 22965 23038 I PocketDisplay: [DBG#16] onSenderIp INVOKING — will create TcpTouchSender
+05-23 19:29:59.882 22965 23038 I PocketDisplay: [DBG#16] onWindowsIpKnown called ip=127.0.0.1 usbMode=true touchSender=exists
+05-23 19:29:59.882 22965 23038 I PocketDisplay: [DBG#16] onSenderIp RETURNED
+05-23 19:29:59.882 22965 23038 I PocketDisplay: Sending mode: extend  screen=2560x1600
+05-23 19:30:01.939 22965 23038 W PocketDisplay: TCP read error: null
+05-23 19:30:02.498 22965 23038 I PocketDisplay: TCP connected to 127.0.0.1:7777
+05-23 19:30:02.498 22965 23038 I PocketDisplay: [DBG#16] onSenderIp INVOKING — will create TcpTouchSender
+05-23 19:30:02.498 22965 23038 I PocketDisplay: [DBG#16] onWindowsIpKnown called ip=127.0.0.1 usbMode=true touchSender=exists
+05-23 19:30:02.498 22965 23038 I PocketDisplay: [DBG#16] onSenderIp RETURNED
+05-23 19:30:02.498 22965 23038 I PocketDisplay: Sending mode: extend  screen=2560x1600
+05-23 19:30:04.545 22965 23038 W PocketDisplay: TCP read error: null
+05-23 19:30:05.105 22965 23038 I PocketDisplay: TCP connected to 127.0.0.1:7777
+05-23 19:30:05.106 22965 23038 I PocketDisplay: [DBG#16] onSenderIp INVOKING — will create TcpTouchSender
+05-23 19:30:05.106 22965 23038 I PocketDisplay: [DBG#16] onWindowsIpKnown called ip=127.0.0.1 usbMode=true touchSender=exists
+05-23 19:30:05.106 22965 23038 I PocketDisplay: [DBG#16] onSenderIp RETURNED
+05-23 19:30:05.106 22965 23038 I PocketDisplay: Sending mode: extend  screen=2560x1600
+05-23 19:30:07.157 22965 23038 W PocketDisplay: TCP read error: null
