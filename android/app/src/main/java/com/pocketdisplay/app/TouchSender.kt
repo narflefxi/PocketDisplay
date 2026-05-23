@@ -147,10 +147,12 @@ open class TouchSender(
     /** Notify Windows that Android's codec is ready (type 8). */
     fun sendAck() {
         executor.submit {
-            if (tcpSocket != null) {
+            if (!useTcp || tcpSocket != null) {
+                // WiFi (UDP): socket always ready — send immediately.
+                // USB (TCP): socket already connected — send directly.
                 rawSend(buildAckPacket())
             } else {
-                // Touch socket not yet connected; buffer and flush when it connects.
+                // USB TCP touch socket not yet connected; buffer and flush when it connects.
                 pendingAck = true
             }
         }

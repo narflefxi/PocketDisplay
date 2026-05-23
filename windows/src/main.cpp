@@ -735,13 +735,16 @@ int main(int argc, char* argv[]) {
     strncpy_s(g_gui.statusMsg, "Waiting for Android…", 255);
 
     std::thread resend_thread([&]() {
-        // Wait until TouchReceiver has accepted Android's touch socket before
-        // sending codec config.  This replaces the unreliable 500ms fixed delay:
-        // sendAck() will find tcpSocket != null and send the ACK directly instead
-        // of relying on the pendingAck flush which can silently lose the packet.
-        while (g_running && !touch_socket_ready.load())
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        std::cout << "[DBG] resend_thread: touch socket ready — starting codec handshake\n";
+        // USB only: wait until Android's touch socket is connected before sending
+        // codec config. This ensures sendAck() finds tcpSocket != null and sends
+        // the ACK directly rather than buffering it in pendingAck (which can lose it
+        // if the connect thread has already exited by the time the ACK is needed).
+        // WiFi: UDP touch is connectionless — no wait needed, proceed immediately.
+        if (usb_mode) {
+            while (g_running && !touch_socket_ready.load())
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            std::cout << "[DBG] resend_thread: USB touch socket ready — starting codec handshake\n";
+        }
         while (g_running) {
             if (!android_ready) {
                 const int attempt = connect_attempt.load();
