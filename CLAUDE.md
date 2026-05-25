@@ -45,12 +45,6 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 - Auto-reconnect: working
 
 ## Known Issues (Open)
-- #16: First USB connection fails when Android launches before Windows
-  Root cause: adb reverse fakes successful TCP connect before Windows 
-  opens port 7778. TcpTouchSender treats phantom success as real, exits 
-  retry loop. touch_socket_ready never set. resend_thread blocks forever.
-  Latest attempt: probe write in TcpTouchSender (1a78b74) — still fails.
-  
 - #17: Display ghosted/soft — needs sharper output
 - #18: WiFi black screen after connection
 - #12: Remove Quick Actions from Android Dashboard
@@ -61,6 +55,7 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 - #1: Cursor position mismatch
 
 ## Recently Fixed
+- #16: Android-first USB connection deadlock ✅
 - #14: Black screen on re-launch ✅
 - #15: USB reconnect works consistently ✅
 - #10: Android app icon (black bg + centered) ✅
@@ -72,11 +67,12 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 1. Windows starts → EarlyAdbReverse opens ports 7777/7778
 2. Android connects to 7777 → sends mode (mirror/extend)
 3. Windows WaitForMode() returns
-4. resend_thread waits for touch_socket_ready
-5. Android TcpTouchSender connects to 7778
-6. touch_socket_ready = true → resend_thread sends stream_info + codec_config
-7. Android configures decoder → sends ACK
-8. android_ready = true → video frames flow
+4. resend_thread immediately sends stream_info + codec_config (no gate)
+5. Android TcpTouchSender connects to 7778 (retries until Windows opens it)
+6. Android configures decoder → sends ACK (retries every 1s until first frame)
+7. android_ready = true → video frames flow
+   Note: TcpTouchSender connect thread is persistent — reconnects automatically
+   if socket dies (e.g. Windows restart). rawSend nulls tcpSocket on failure.
 
 ## Important Rules
 - Never use system() or _popen() for adb — causes cmd popup
