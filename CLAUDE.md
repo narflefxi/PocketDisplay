@@ -46,7 +46,6 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 
 ## Known Issues (Open)
 - #17: Display ghosted/soft — needs sharper output
-- #18: WiFi black screen after connection
 - #12: Remove Quick Actions from Android Dashboard
 - #13: Add About screen to Android app
 - #8: Custom resolution selection
@@ -55,6 +54,7 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 - #1: Cursor position mismatch
 
 ## Recently Fixed
+- #18: WiFi black screen on reconnect (android_ready not reset) ✅
 - #16: Android-first USB connection deadlock ✅
 - #14: Black screen on re-launch ✅
 - #15: USB reconnect works consistently ✅

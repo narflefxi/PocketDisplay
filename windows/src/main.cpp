@@ -674,6 +674,7 @@ int main(int argc, char* argv[]) {
     // ── Codec config resend thread ────────────────────────────────────────────
 
     std::atomic<bool> android_ready{false};
+    std::atomic<bool> reconnect_pending{false};
     std::atomic<int>  connect_attempt{0};  // incremented on every (re)connect
     // Reset android_ready on every reconnect (after the first WaitForMode connection)
     // so resend_thread re-sends codec config.  Without this, android_ready stays true
@@ -703,7 +704,19 @@ int main(int argc, char* argv[]) {
     });
     touch.SetAckCallback([&]() {
         const int attempt = connect_attempt.load();
+        if (!usb_mode && android_ready.load()) {
+            // WiFi reconnect: fresh Android decoder — reset so resend_thread re-sends codec config
+            const int new_attempt = connect_attempt.fetch_add(1) + 1;
+            android_ready.store(false);
+            reconnect_pending.store(true);
+            SetColor(YELLOW);
+            std::cout << "\n[DBG] ==> WiFi RECONNECT detected (ACK while ready) attempt #"
+                      << new_attempt << "  android_ready -> FALSE  reconnect_pending -> TRUE\n";
+            ResetColor();
+            return;
+        }
         android_ready = true;
+        reconnect_pending.store(false);
         g_gui.connected.store(true);
         strncpy_s(g_gui.statusMsg, "Android ready \u2014 streaming", 255);
         SetColor(GREEN);
@@ -764,8 +777,9 @@ int main(int argc, char* argv[]) {
                           << connect_attempt.load() << "  skipping send\n";
             }
 
-            for (int i = 0; i < 20 && g_running; ++i)
+            for (int i = 0; i < 20 && g_running && !reconnect_pending.load(); ++i)
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            reconnect_pending.store(false);
         }
     });
 
