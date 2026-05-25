@@ -55,7 +55,7 @@ open class TouchSender(
 
     private val udpSocket    = if (!useTcp) DatagramSocket() else null
     private val targetAddr   = if (!useTcp) InetAddress.getByName(targetIp) else null
-    private var tcpSocket: Socket? = null
+    @Volatile private var tcpSocket: Socket? = null
     private val executor     = Executors.newSingleThreadExecutor()
     // ACK may arrive before the touch socket connects; buffer it and flush on connect.
     @Volatile private var pendingAck  = false
@@ -73,6 +73,11 @@ open class TouchSender(
                 Log.i("PocketDisplay", "[DBG#16] TouchSender connect thread started -> $targetIp:$port")
                 var attempt = 0
                 while (!closed) {
+                    if (tcpSocket != null) {
+                        // Socket appears healthy; wake every 500 ms to re-check.
+                        try { Thread.sleep(500) } catch (_: InterruptedException) { break }
+                        continue
+                    }
                     var s: Socket? = null
                     try {
                         attempt++
@@ -80,26 +85,19 @@ open class TouchSender(
                         s = Socket()
                         s.tcpNoDelay = true
                         s.connect(addr, 600)
-                        // Probe write: adb reverse can accept the Android-side connection
-                        // before Windows has opened PC port 7778, giving a phantom "success".
-                        // A write to such a phantom socket fails (broken pipe / connection
-                        // reset) once the adb tunnel realises the PC side is not listening.
-                        // SCROLL(0,0) is a no-op on Windows (zero-delta guards prevent any
-                        // input injection), so real connections are unaffected.
-                        Log.i("PocketDisplay", "[DBG#16] Touch TCP connected, probing real connection attempt #$attempt")
+                        // Probe write detects phantom adb-reverse connections (PC port not
+                        // yet open).  SCROLL(0,0) is a no-op on Windows.
+                        Log.i("PocketDisplay", "[DBG#16] Touch TCP connected, probing attempt #$attempt")
                         s.getOutputStream().write(buildTouchPacket(EventType.SCROLL.code, 0f, 0f))
-                        // Probe succeeded — this is a real connection (Windows accepted it).
                         tcpSocket = s
-                        Log.i("PocketDisplay", "[DBG#16] Touch TCP probe OK — real connection on attempt #$attempt")
-                        // Flush any ACK buffered before connection was ready.
-                        // Submit via executor so it runs after any queued sends.
+                        Log.i("PocketDisplay", "[DBG#16] Touch TCP probe OK — connection #$attempt")
                         executor.submit {
                             if (pendingAck) {
                                 pendingAck = false
                                 rawSend(buildAckPacket())
                             }
                         }
-                        break  // connected — stop retrying
+                        // Do NOT break — keep looping so we detect future disconnections.
                     } catch (e: Exception) {
                         Log.d("PocketDisplay", "[DBG#16] Touch TCP attempt #$attempt failed: ${e.message}")
                         try { s?.close() } catch (_: Exception) {}
@@ -162,12 +160,15 @@ open class TouchSender(
     /** Notify Windows that Android's codec is ready (type 8). */
     fun sendAck() {
         executor.submit {
-            if (!useTcp || tcpSocket != null) {
+            val sock = tcpSocket
+            Log.i("PocketDisplay", "[ACK] sendAck: useTcp=$useTcp tcpSocket=${if (sock != null) "connected" else "null"}")
+            if (!useTcp || sock != null) {
                 // WiFi (UDP): socket always ready — send immediately.
                 // USB (TCP): socket already connected — send directly.
                 rawSend(buildAckPacket())
             } else {
                 // USB TCP touch socket not yet connected; buffer and flush when it connects.
+                Log.i("PocketDisplay", "[ACK] sendAck: buffered as pendingAck")
                 pendingAck = true
             }
         }
@@ -197,7 +198,14 @@ open class TouchSender(
             } else {
                 udpSocket?.send(DatagramPacket(data, data.size, targetAddr, port))
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            if (useTcp) {
+                Log.w("PocketDisplay", "[ACK] rawSend TCP failed: ${e.message}")
+                // Mark socket as dead so the connect thread reconnects.
+                val dead = tcpSocket; tcpSocket = null
+                try { dead?.close() } catch (_: Exception) {}
+            }
+        }
     }
 
     fun close() {

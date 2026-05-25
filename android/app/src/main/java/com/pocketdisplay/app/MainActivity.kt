@@ -86,6 +86,16 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         updateStatus("Connecting\u2026 (waiting for video)")
     }
     @Volatile private var videoShowPending = false
+    @Volatile private var firstFrameReceived = false
+
+    private val ackRetryRunnable = object : Runnable {
+        override fun run() {
+            if (firstFrameReceived) return
+            Log.i(TAG, "[ACK] retry — no first frame yet, resending ACK")
+            touchSender?.sendAck()
+            firstFrameHandler.postDelayed(this, 1000)
+        }
+    }
 
     /** Coalesced UI update: decoder / network callbacks can race with layout & [setDefaultBufferSize]. */
     private val applyFillTransformRunnable = Runnable { applyFillTransform() }
@@ -259,6 +269,8 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     }
 
     private fun stopReceiver() {
+        firstFrameReceived = true
+        firstFrameHandler.removeCallbacks(ackRetryRunnable)
         firstFrameHandler.removeCallbacks(firstFrameTimeoutRunnable)
         videoShowPending = false
         binding.videoLoadingCover.visibility = View.GONE
@@ -332,6 +344,8 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     }
 
     private fun onFirstFrame() {
+        firstFrameReceived = true
+        firstFrameHandler.removeCallbacks(ackRetryRunnable)
         firstFrameHandler.removeCallbacks(firstFrameTimeoutRunnable)
         runOnUiThread { binding.videoLoadingCover.visibility = View.GONE }
     }
@@ -346,7 +360,10 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     }
 
     private fun onCodecConfigured() {
-        touchSender?.sendAck()
+        firstFrameReceived = false
+        firstFrameHandler.removeCallbacks(ackRetryRunnable)
+        touchSender?.sendAck()                               // immediate first attempt
+        firstFrameHandler.postDelayed(ackRetryRunnable, 1000) // retry every 1 s until first frame
     }
 
     private fun updateStatus(msg: String) {
