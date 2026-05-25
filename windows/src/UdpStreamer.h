@@ -15,6 +15,7 @@ public:
                     uint16_t port = pocketdisplay::DEFAULT_PORT);
     bool SendFrame(const uint8_t* data, size_t size,
                    uint32_t frame_id, uint8_t flags);
+    void UpdateTarget(const std::string& ip);  // re-point to new Android IP
     void Close();
 
 private:

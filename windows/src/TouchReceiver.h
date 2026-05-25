@@ -2,6 +2,7 @@
 #include <winsock2.h>
 #include <windows.h>
 #include <cstdint>
+#include <string>
 #include <atomic>
 #include <functional>
 #include <thread>
@@ -19,8 +20,9 @@ public:
     bool Start(uint16_t port = 7778, bool tcp_mode = false);
     void Stop();
 
-    // Called once when Android sends a codec-ready ACK (touch packet type 8).
-    void SetAckCallback(std::function<void()> cb) { ack_cb_ = std::move(cb); }
+    // Called when Android sends a codec-ready ACK (touch packet type 8).
+    // Argument is the sender's IP address (empty string in USB/TCP mode).
+    void SetAckCallback(std::function<void(const std::string&)> cb) { ack_cb_ = std::move(cb); }
 
     // Called each time Android connects (or reconnects) on the touch socket.
     void SetConnectCallback(std::function<void()> cb) { connect_cb_ = std::move(cb); }
@@ -38,7 +40,8 @@ private:
     void InjectUnicodeChar(uint32_t codepoint) const;
     void InjectVirtualKey(uint16_t vk, bool key_down) const;
 
-    std::function<void()> ack_cb_;
+    std::function<void(const std::string&)> ack_cb_;
+    std::string last_udp_sender_;
     std::function<void()> connect_cb_;
     SOCKET            sock_         = INVALID_SOCKET;
     std::thread       thread_;

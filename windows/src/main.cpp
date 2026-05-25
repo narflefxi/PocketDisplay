@@ -352,6 +352,7 @@ struct IStreamer {
     virtual bool Initialize(const std::string& ip, uint16_t port) = 0;
     virtual bool SendFrame(const uint8_t* d, size_t sz,
                             uint32_t id, uint8_t flags) = 0;
+    virtual void UpdateTarget(const std::string& /*ip*/) {}  // no-op for TCP
     virtual void Close() = 0;
     virtual ~IStreamer() = default;
 };
@@ -360,6 +361,7 @@ struct UdpStreamerWrap : IStreamer {
     UdpStreamer s;
     bool Initialize(const std::string& ip, uint16_t port) override { return s.Initialize(ip,port); }
     bool SendFrame(const uint8_t* d, size_t sz, uint32_t id, uint8_t f) override { return s.SendFrame(d,sz,id,f); }
+    void UpdateTarget(const std::string& ip) override { s.UpdateTarget(ip); }
     void Close() override { s.Close(); }
 };
 
@@ -674,7 +676,6 @@ int main(int argc, char* argv[]) {
     // ── Codec config resend thread ────────────────────────────────────────────
 
     std::atomic<bool> android_ready{false};
-    std::atomic<bool> reconnect_pending{false};
     std::atomic<int>  connect_attempt{0};  // incremented on every (re)connect
     // Reset android_ready on every reconnect (after the first WaitForMode connection)
     // so resend_thread re-sends codec config.  Without this, android_ready stays true
@@ -702,21 +703,17 @@ int main(int argc, char* argv[]) {
         std::cout << "[DBG] touch socket accepted\n" << std::flush;
         ResetColor();
     });
-    touch.SetAckCallback([&]() {
+    touch.SetAckCallback([&](const std::string& sender_ip) {
         const int attempt = connect_attempt.load();
-        if (!usb_mode && android_ready.load()) {
-            // WiFi reconnect: fresh Android decoder — reset so resend_thread re-sends codec config
-            const int new_attempt = connect_attempt.fetch_add(1) + 1;
-            android_ready.store(false);
-            reconnect_pending.store(true);
+        if (!usb_mode && !sender_ip.empty() && sender_ip != target_ip) {
             SetColor(YELLOW);
-            std::cout << "\n[DBG] ==> WiFi RECONNECT detected (ACK while ready) attempt #"
-                      << new_attempt << "  android_ready -> FALSE  reconnect_pending -> TRUE\n";
+            std::cout << "\n[DBG] ==> Android IP changed: " << target_ip
+                      << " -> " << sender_ip << "  updating UDP target\n";
             ResetColor();
-            return;
+            target_ip = sender_ip;
+            streamer->UpdateTarget(sender_ip);
         }
         android_ready = true;
-        reconnect_pending.store(false);
         g_gui.connected.store(true);
         strncpy_s(g_gui.statusMsg, "Android ready \u2014 streaming", 255);
         SetColor(GREEN);
@@ -747,39 +744,26 @@ int main(int argc, char* argv[]) {
 
     std::thread resend_thread([&]() {
         while (g_running) {
-            if (!android_ready) {
-                const int attempt = connect_attempt.load();
-                std::cout << "[DBG] resend_thread: android_ready=false attempt=#" << attempt
-                          << "  sending stream_info...\n";
+            // Always send stream_info + codec_config so Android can (re)configure
+            // its decoder after any WiFi reconnect or IP change, without waiting
+            // for a signal from Windows.  VideoDecoder.configure() deduplicates
+            // identical SPS: same codec → just re-ACKs; fresh decoder → full init.
+            uint8_t dims[12];
+            const uint32_t sw = htonl(static_cast<uint32_t>(cap_w));
+            const uint32_t sh = htonl(static_cast<uint32_t>(cap_h));
+            const uint32_t sf = htonl(extended ? 1u : 0u);
+            std::memcpy(dims,     &sw, 4);
+            std::memcpy(dims + 4, &sh, 4);
+            std::memcpy(dims + 8, &sf, 4);
+            streamer->SendFrame(dims, 12, 0, pocketdisplay::FLAG_STREAM_INFO);
 
-                uint8_t dims[12];
-                const uint32_t sw = htonl(static_cast<uint32_t>(cap_w));
-                const uint32_t sh = htonl(static_cast<uint32_t>(cap_h));
-                const uint32_t sf = htonl(extended ? 1u : 0u);
-                std::memcpy(dims,     &sw, 4);
-                std::memcpy(dims + 4, &sh, 4);
-                std::memcpy(dims + 8, &sf, 4);
-                const bool si_ok = streamer->SendFrame(dims, 12, 0, pocketdisplay::FLAG_STREAM_INFO);
-                std::cout << "[DBG] resend_thread: stream_info send="
-                          << (si_ok ? "OK" : "FAILED") << "\n";
+            std::vector<uint8_t> sps_pps;
+            if (encoder->GetConfigPacket(sps_pps) && !sps_pps.empty())
+                streamer->SendFrame(sps_pps.data(), sps_pps.size(),
+                                    0, pocketdisplay::FLAG_CODEC_CONFIG);
 
-                std::vector<uint8_t> sps_pps;
-                if (encoder->GetConfigPacket(sps_pps) && !sps_pps.empty()) {
-                    const bool cc_ok = streamer->SendFrame(sps_pps.data(), sps_pps.size(),
-                                        0, pocketdisplay::FLAG_CODEC_CONFIG);
-                    std::cout << "[DBG] resend_thread: codec_config (" << sps_pps.size()
-                              << " bytes) send=" << (cc_ok ? "OK" : "FAILED") << "\n";
-                } else {
-                    std::cout << "[DBG] resend_thread: GetConfigPacket returned empty\n";
-                }
-            } else {
-                std::cout << "[DBG] resend_thread: android_ready=true attempt=#"
-                          << connect_attempt.load() << "  skipping send\n";
-            }
-
-            for (int i = 0; i < 20 && g_running && !reconnect_pending.load(); ++i)
+            for (int i = 0; i < 20 && g_running; ++i)
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            reconnect_pending.store(false);
         }
     });
 

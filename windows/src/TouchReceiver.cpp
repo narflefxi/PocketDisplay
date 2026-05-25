@@ -104,7 +104,7 @@ void TouchReceiver::ProcessPacket(const uint8_t* buf, int len) {
         InjectVirtualKey(be_u16(pkt->payload), type == 6);
     } else if (type == 8) {
         // Codec-ready ACK from Android
-        if (ack_cb_) ack_cb_();
+        if (ack_cb_) ack_cb_(last_udp_sender_);
     }
 }
 
@@ -112,9 +112,15 @@ void TouchReceiver::ProcessPacket(const uint8_t* buf, int len) {
 
 void TouchReceiver::UdpLoop() {
     uint8_t buf[sizeof(TouchPacket)];
+    sockaddr_in sender_addr = {};
+    int sender_len = sizeof(sender_addr);
     while (running_) {
-        int n = recv(sock_, reinterpret_cast<char*>(buf), sizeof(buf), 0);
+        int n = recvfrom(sock_, reinterpret_cast<char*>(buf), sizeof(buf), 0,
+                         reinterpret_cast<sockaddr*>(&sender_addr), &sender_len);
         if (n <= 0) break;
+        char ip_buf[INET_ADDRSTRLEN] = {};
+        inet_ntop(AF_INET, &sender_addr.sin_addr, ip_buf, sizeof(ip_buf));
+        last_udp_sender_ = ip_buf;
         ProcessPacket(buf, n);
     }
 }

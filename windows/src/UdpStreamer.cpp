@@ -58,6 +58,10 @@ bool UdpStreamer::SendFrame(const uint8_t* data, size_t size,
     return true;
 }
 
+void UdpStreamer::UpdateTarget(const std::string& ip) {
+    inet_pton(AF_INET, ip.c_str(), &dest_.sin_addr);
+}
+
 void UdpStreamer::Close() {
     if (sock_ == INVALID_SOCKET) return;
     closesocket(sock_);
