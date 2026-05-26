@@ -7,6 +7,7 @@
 #include "TouchReceiver.h"
 #include "Protocol.h"
 #include "GuiApp.h"
+#include "VirtualDisplayDriver.h"
 
 #include <windows.h>
 #include <iostream>
@@ -556,6 +557,16 @@ int main(int argc, char* argv[]) {
         ResetColor();
 
         if (extend_mode) {
+            SetColor(CYAN);
+            std::cout << "[USB] Checking virtual display driver...\n";
+            ResetColor();
+            if (const std::string e = EnsureVirtualDisplayDriverForExtendedMode(); !e.empty()) {
+                SetColor(RED);
+                std::cerr << "  ERROR: " << e << "\n";
+                ResetColor();
+                return 1;
+            }
+
             int and_w = 0, and_h = 0;
             usb_server->s.GetAndroidSize(and_w, and_h);
             if (and_w > 0 && and_h > 0) {
@@ -568,6 +579,18 @@ int main(int argc, char* argv[]) {
                     Sleep(800);  // let Windows settle before capture
                 }
             }
+        }
+    }
+
+    if (extend_mode && !usb_mode) {
+        SetColor(CYAN);
+        std::cout << "[EXT] Checking virtual display driver...\n";
+        ResetColor();
+        if (const std::string e = EnsureVirtualDisplayDriverForExtendedMode(); !e.empty()) {
+            SetColor(RED);
+            std::cerr << "  ERROR: " << e << "\n";
+            ResetColor();
+            return 1;
         }
     }
 

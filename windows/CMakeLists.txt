@@ -17,6 +17,7 @@ add_executable(PocketDisplay
     src/TcpVideoServer.cpp
     src/AdbUsbSetup.cpp
     src/TouchReceiver.cpp
+    src/VirtualDisplayDriver.cpp
     resources/resource.rc
 )
 
@@ -38,6 +39,8 @@ target_link_libraries(PocketDisplay PRIVATE
     ole32
     user32
     gdi32
+    setupapi
+    newdev
     windowscodecs
     msimg32
 )
@@ -56,6 +59,18 @@ foreach(FONT Anton-Regular.ttf SpaceGrotesk-Medium.ttf SpaceGrotesk-Bold.ttf)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/../assets/${FONT}"
             "$<TARGET_FILE_DIR:PocketDisplay>/${FONT}")
+endforeach()
+
+set(VDD_DRIVER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/drivers/virtual-display")
+foreach(VDD_FILE MttVDD.inf MttVDD.cat MttVDD.dll vdd_settings.xml)
+    if(EXISTS "${VDD_DRIVER_DIR}/${VDD_FILE}")
+        add_custom_command(TARGET PocketDisplay POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_FILE_DIR:PocketDisplay>/drivers/virtual-display"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${VDD_DRIVER_DIR}/${VDD_FILE}"
+                "$<TARGET_FILE_DIR:PocketDisplay>/drivers/virtual-display/${VDD_FILE}")
+    endif()
 endforeach()
 
 target_compile_definitions(PocketDisplay PRIVATE

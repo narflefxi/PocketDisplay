@@ -54,6 +54,7 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 - #1: Cursor position mismatch
 
 ## Recently Fixed
+- #19: Extended mode fresh Windows install missing virtual display driver ✅
 - #18: WiFi black screen on reconnect (android_ready not reset) ✅
 - #16: Android-first USB connection deadlock ✅
 - #14: Black screen on re-launch ✅
@@ -77,5 +78,6 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 ## Important Rules
 - Never use system() or _popen() for adb — causes cmd popup
 - Use CreateProcess() with CREATE_NO_WINDOW for silent adb calls
+- Extended mode uses the bundled VirtualDrivers Virtual Display Driver at windows/drivers/virtual-display; install is attempted only when extended mode is selected
 - Always test: Windows-first, Android-first, AND reconnect scenarios
 - Do not break existing working flows when fixing new issues
