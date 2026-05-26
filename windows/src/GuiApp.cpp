@@ -411,7 +411,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             !g_gui.guiStartRequested.load()) {
             RECT cr; GetClientRect(hwnd, &cr);
             int cw = cr.right - SIDEBAR_W;
-            const int btnY = 240 + 66;
+            // Mirror PaintDashboard layout: status(h=80) + setup(offset+72) + res/fps(h=84) + mode → btnY
+            const int cardY = 62, cardH = 80;
+            const int mcY   = cardY + cardH + 14 + 72 + 84;  // 312
+            const int btnY  = mcY + 66;
             if (mx >= SIDEBAR_W + 20 && mx <= cr.right - 20 &&
                 my >= btnY && my < btnY + 40) {
                 g_gui.guiStartRequested.store(true);
