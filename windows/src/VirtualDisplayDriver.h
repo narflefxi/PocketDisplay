@@ -4,3 +4,4 @@
 
 bool HasActiveVirtualDisplay();
 std::string EnsureVirtualDisplayDriverForExtendedMode();
+std::string EnsureVirtualDisplayDriverInstalled();

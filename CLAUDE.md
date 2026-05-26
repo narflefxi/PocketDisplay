@@ -54,6 +54,7 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 - #1: Cursor position mismatch
 
 ## Recently Fixed
+- #20: First-time setup now handles VDD setup, adb reverse, x264 runtime DLL, and GUI setup status ✅
 - #19: Extended mode fresh Windows install missing virtual display driver ✅
 - #18: WiFi black screen on reconnect (android_ready not reset) ✅
 - #16: Android-first USB connection deadlock ✅

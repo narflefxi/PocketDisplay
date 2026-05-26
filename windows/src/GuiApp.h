@@ -18,8 +18,10 @@ struct GuiState {
     std::atomic<bool>  guiStartRequested{false};
     // True once main() has configured the streaming params (GUI-only launch).
     std::atomic<bool>  waitingForStart  {false};
+    std::atomic<bool>  setupActive      {false};
     char               mode[32]    = "USB";   // written once before GUI starts
     char               statusMsg[256] = "Starting…";
+    char               setupMsg[256] = "First-time setup: checking…";
 };
 
 extern GuiState g_gui;

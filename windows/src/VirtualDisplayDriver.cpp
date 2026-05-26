@@ -1,6 +1,7 @@
 #include "VirtualDisplayDriver.h"
 
 #include <windows.h>
+#include <urlmon.h>
 #include <newdev.h>
 #include <setupapi.h>
 
@@ -61,6 +62,12 @@ static fs::path FindDriverInf() {
     if (fs::is_regular_file(dev)) return dev;
 
     return {};
+}
+
+static fs::path GetTempInstallerPath() {
+    wchar_t temp[MAX_PATH] = {};
+    if (GetTempPathW(MAX_PATH, temp) == 0) return {};
+    return fs::path(temp) / "PocketDisplay-VDD-setup-x64.exe";
 }
 
 static std::string LastWin32Error(const char* what) {
@@ -139,6 +146,42 @@ static std::string CreateRootDevice(const wchar_t* hardware_id) {
     return {};
 }
 
+static std::string RunHiddenInstaller(const fs::path& exe) {
+    std::wstring cmd = L"\"" + exe.wstring() + L"\" /quiet /norestart";
+    STARTUPINFOW si = {};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi = {};
+    const BOOL ok = CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, exe.parent_path().wstring().c_str(), &si, &pi);
+    if (!ok) return LastWin32Error("CreateProcess");
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD exit_code = 1;
+    GetExitCodeProcess(pi.hProcess, &exit_code);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    if (exit_code == 0 || exit_code == 3010) return {};
+    std::ostringstream oss;
+    oss << "VDD Control installer failed with exit code " << exit_code;
+    return oss.str();
+}
+
+static std::string DownloadAndRunVddControlInstaller() {
+    if (!IsProcessElevated()) {
+        return "First-time VDD setup requires Administrator. Please run PocketDisplay as Administrator once.";
+    }
+    const fs::path installer = GetTempInstallerPath();
+    if (installer.empty()) return "Could not determine temp path for VDD installer.";
+    constexpr wchar_t kUrl[] = L"https://github.com/VirtualDrivers/Virtual-Display-Driver/releases/download/25.5.2/Virtual.Display.Driver-v25.05.03-setup-x64.exe";
+    const HRESULT hr = URLDownloadToFileW(nullptr, kUrl, installer.wstring().c_str(), 0, nullptr);
+    if (FAILED(hr)) {
+        std::ostringstream oss;
+        oss << "VDD installer download failed (HRESULT 0x" << std::hex << static_cast<unsigned long>(hr) << ")";
+        return oss.str();
+    }
+    if (std::string e = RunHiddenInstaller(installer); !e.empty()) return e;
+    Sleep(2500);
+    return {};
+}
+
 std::string EnsureVirtualDisplayDriverForExtendedMode() {
     if (HasActiveVirtualDisplay()) return {};
 
@@ -170,4 +213,14 @@ std::string EnsureVirtualDisplayDriverForExtendedMode() {
     Sleep(2500);
     if (HasActiveVirtualDisplay()) return {};
     return "Virtual display driver installed, but no active virtual display appeared. Open Windows Display Settings or reboot, then try Extended mode again.";
+}
+
+std::string EnsureVirtualDisplayDriverInstalled() {
+    if (HasActiveVirtualDisplay()) return {};
+    if (const fs::path inf = FindDriverInf(); !inf.empty()) {
+        if (const std::string e = EnsureVirtualDisplayDriverForExtendedMode(); e.empty() || HasActiveVirtualDisplay()) return e;
+    }
+    if (const std::string e = DownloadAndRunVddControlInstaller(); !e.empty()) return e;
+    if (HasActiveVirtualDisplay()) return {};
+    return "VDD setup completed, but no active virtual display is visible yet. Reboot may be required.";
 }

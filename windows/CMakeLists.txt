@@ -6,6 +6,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_path(X264_INCLUDE_DIR NAMES x264.h REQUIRED)
 find_library(X264_LIBRARY NAMES libx264 x264 REQUIRED)
+get_filename_component(X264_LIBRARY_DIR "${X264_LIBRARY}" DIRECTORY)
+find_file(X264_RUNTIME_DLL NAMES libx264-164.dll libx264.dll
+    PATHS
+        "${X264_LIBRARY_DIR}/../bin"
+        "${X264_LIBRARY_DIR}"
+    NO_DEFAULT_PATH)
+if(X264_RUNTIME_DLL)
+    get_filename_component(X264_RUNTIME_DLL_NAME "${X264_RUNTIME_DLL}" NAME)
+endif()
 
 add_executable(PocketDisplay
     src/main.cpp
@@ -41,6 +50,7 @@ target_link_libraries(PocketDisplay PRIVATE
     gdi32
     setupapi
     newdev
+    urlmon
     windowscodecs
     msimg32
 )
@@ -60,6 +70,13 @@ foreach(FONT Anton-Regular.ttf SpaceGrotesk-Medium.ttf SpaceGrotesk-Bold.ttf)
             "${CMAKE_CURRENT_SOURCE_DIR}/../assets/${FONT}"
             "$<TARGET_FILE_DIR:PocketDisplay>/${FONT}")
 endforeach()
+
+if(X264_RUNTIME_DLL)
+    add_custom_command(TARGET PocketDisplay POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${X264_RUNTIME_DLL}"
+            "$<TARGET_FILE_DIR:PocketDisplay>/${X264_RUNTIME_DLL_NAME}")
+endif()
 
 set(VDD_DRIVER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/drivers/virtual-display")
 foreach(VDD_FILE MttVDD.inf MttVDD.cat MttVDD.dll vdd_settings.xml)

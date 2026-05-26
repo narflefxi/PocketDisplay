@@ -189,19 +189,6 @@ static std::string GetLocalIp() {
     return std::string(buf);
 }
 
-static bool DetectUsbDevice() {
-    FILE* pipe = _popen("adb devices 2>NUL", "r");
-    if (!pipe) return false;
-    char line[256] = {};
-    bool header_done = false, found = false;
-    while (fgets(line, sizeof(line), pipe)) {
-        if (!header_done) { header_done = true; continue; }
-        if (strstr(line, "\tdevice") != nullptr) { found = true; break; }
-    }
-    _pclose(pipe);
-    return found;
-}
-
 static std::string GetSubnetBroadcast(const std::string& local_ip) {
     const size_t dot = local_ip.rfind('.');
     return (dot != std::string::npos) ? local_ip.substr(0, dot + 1) + "255"
@@ -446,6 +433,17 @@ int main(int argc, char* argv[]) {
     }
 
     GuiLaunch();
+    g_gui.setupActive.store(true);
+    strncpy_s(g_gui.setupMsg, "First-time setup: checking Virtual Display Driver…", 255);
+    if (const std::string e = EnsureVirtualDisplayDriverInstalled(); !e.empty()) {
+        strncpy_s(g_gui.setupMsg, e.c_str(), 255);
+        SetColor(YELLOW);
+        std::cout << "[SETUP] " << e << "\n";
+        ResetColor();
+    } else {
+        strncpy_s(g_gui.setupMsg, "First-time setup complete: VDD ready", 255);
+    }
+    g_gui.setupActive.store(false);
     PrintBanner();
 
     bool usb_mode     = false;
@@ -531,10 +529,16 @@ int main(int argc, char* argv[]) {
         std::cout << "[USB] Configuring adb reverse (tcp:" << port
                   << ", tcp:" << touch_port << ")...\n";
         ResetColor();
+        g_gui.setupActive.store(true);
+        strncpy_s(g_gui.setupMsg, "USB setup: configuring adb reverse…", 255);
         if (const std::string e = RunAdbUsbReverse(port, touch_port); !e.empty()) {
+            g_gui.setupActive.store(false);
+            strncpy_s(g_gui.setupMsg, e.c_str(), 255);
             SetColor(RED); std::cerr << "  ERROR: " << e << "\n"; ResetColor();
             return 1;
         }
+        strncpy_s(g_gui.setupMsg, "USB setup complete: adb reverse ready", 255);
+        g_gui.setupActive.store(false);
         SetColor(GREEN); std::cout << "[USB] adb reverse OK.\n"; ResetColor();
 
         usb_server = std::make_unique<TcpVideoServerWrap>();

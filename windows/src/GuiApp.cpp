@@ -263,6 +263,18 @@ static void PaintDashboard(HDC dc, int cx, int cy, int cw, int ch) {
     DrawText_(dc, smW.c_str(), cx+54, cardY+52, cw-100, 20, C_MUTED);
 
     int sc1y = cardY + cardH + 14;
+    RoundRectFill(dc, cx+20, sc1y, cw-40, 58, 12, C_CARD);
+    SelectObject(dc, fLabel);
+    DrawText_(dc, L"FIRST-TIME SETUP", cx+36, sc1y+10, 160, 18, C_MUTED);
+    SelectObject(dc, fSm);
+    char setup[256]; strncpy_s(setup, g_gui.setupMsg, 255);
+    int setupLen = MultiByteToWideChar(CP_UTF8, 0, setup, -1, nullptr, 0);
+    std::wstring setupW(setupLen, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, setup, -1, setupW.data(), setupLen);
+    DrawText_(dc, setupW.c_str(), cx+36, sc1y+30, cw-72, 20,
+              g_gui.setupActive.load() ? C_ORANGE : C_MUTED);
+
+    sc1y += 72;
     RoundRectFill(dc, cx+20, sc1y, (cw-50)/2, 70, 12, C_CARD);
     SelectObject(dc, fLabel);
     DrawText_(dc, L"RESOLUTION", cx+36, sc1y+12, 140, 18, C_MUTED);
