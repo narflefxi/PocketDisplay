@@ -14,14 +14,8 @@ import android.view.Surface
 import android.view.TextureView
 import android.view.View
 import android.view.WindowManager
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
-import android.hardware.usb.UsbManager
 import android.net.wifi.WifiManager
 import android.view.inputmethod.InputMethodManager
-import androidx.core.content.ContextCompat
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.pocketdisplay.app.databinding.ActivityMainBinding
@@ -61,21 +55,18 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
 
     private var usbMode = false
 
-    private val usbReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            when (intent.action) {
-                UsbManager.ACTION_USB_DEVICE_ATTACHED -> runOnUiThread {
-                    Log.i(TAG, "[USB] device attached — switching to USB mode")
-                    if (!usbMode) { setMode(true); autoStartIfNeeded() }
-                }
-                UsbManager.ACTION_USB_DEVICE_DETACHED -> {
-                    val mgr = getSystemService(USB_SERVICE) as UsbManager
-                    if (mgr.deviceList.isEmpty()) runOnUiThread {
-                        Log.i(TAG, "[USB] all devices detached — switching to WiFi mode")
-                        if (usbMode) setMode(false)
+    private val usbPollHandler = Handler(Looper.getMainLooper())
+    private val usbPollRunnable = object : Runnable {
+        override fun run() {
+            if (!usbMode && receiver?.isRunning != true && tcpReceiver?.isRunning != true) {
+                Thread {
+                    if (tcpProbe()) runOnUiThread {
+                        Log.i(TAG, "[USB] poll: port 7777 reachable — switching to USB mode")
+                        if (!usbMode) { setMode(true); autoStartIfNeeded() }
                     }
-                }
+                }.start()
             }
+            usbPollHandler.postDelayed(this, 3000)
         }
     }
 
@@ -163,14 +154,9 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         binding.textureView.surfaceTextureListener = this
         binding.tvDeviceIp.text = "IP: ${getLocalIp()}"
 
-        // Auto-detect connection mode: USB if a host is connected, otherwise WiFi.
+        // TCP probe to 127.0.0.1:7777 — succeeds only when Windows adb reverse is active.
         detectAndSetMode()
-
-        val usbFilter = IntentFilter().apply {
-            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
-            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
-        }
-        ContextCompat.registerReceiver(this, usbReceiver, usbFilter, ContextCompat.RECEIVER_EXPORTED)
+        usbPollHandler.postDelayed(usbPollRunnable, 3000)
 
         binding.btnConnect.setOnClickListener  { toggleReceiver() }
         binding.navAbout.setOnClickListener {
@@ -217,13 +203,32 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     }
 
     private fun detectAndSetMode() {
-        val mgr = getSystemService(USB_SERVICE) as UsbManager
-        usbMode = mgr.deviceList.isNotEmpty()
-        getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit()
-            .putString(PREF_MODE, if (usbMode) "usb" else "wifi").apply()
-        updateModeUi()
-        if (!usbMode) startDiscovery()
+        updateStatus("Detecting connection mode…")
+        Thread {
+            val usb = tcpProbe()
+            runOnUiThread {
+                Log.i(TAG, "[MODE] startup probe: usbReachable=$usb")
+                usbMode = usb
+                getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit()
+                    .putString(PREF_MODE, if (usb) "usb" else "wifi").apply()
+                updateModeUi()
+                if (usb) {
+                    discoverClient?.stop(); discoverClient = null
+                    autoStartIfNeeded()
+                } else {
+                    startDiscovery()
+                }
+            }
+        }.start()
     }
+
+    private fun tcpProbe(host: String = "127.0.0.1", port: Int = 7777, timeoutMs: Int = 300): Boolean =
+        try {
+            java.net.Socket().use { s ->
+                s.connect(java.net.InetSocketAddress(host, port), timeoutMs)
+                true
+            }
+        } catch (_: Exception) { false }
 
     // ── Streaming control ────────────────────────────────────────────────────
 
@@ -326,6 +331,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         hideKeyboard()
         setStatusDot(connected = false)
         updateStatus("Disconnected")
+        firstFrameReceived = false
     }
 
     // ── Callbacks ────────────────────────────────────────────────────────────
@@ -765,7 +771,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
 
     override fun onDestroy() {
         super.onDestroy()
-        unregisterReceiver(usbReceiver)
+        usbPollHandler.removeCallbacks(usbPollRunnable)
         statsHandler.removeCallbacks(statsRunnable)
         stopReceiver()
         multicastLock?.release()
