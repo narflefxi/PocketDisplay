@@ -14,8 +14,14 @@ import android.view.Surface
 import android.view.TextureView
 import android.view.View
 import android.view.WindowManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.hardware.usb.UsbManager
 import android.net.wifi.WifiManager
 import android.view.inputmethod.InputMethodManager
+import androidx.core.content.ContextCompat
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.pocketdisplay.app.databinding.ActivityMainBinding
@@ -54,6 +60,24 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     @Volatile private var videoOffsetY = 0f
 
     private var usbMode = false
+
+    private val usbReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                UsbManager.ACTION_USB_DEVICE_ATTACHED -> runOnUiThread {
+                    Log.i(TAG, "[USB] device attached — switching to USB mode")
+                    if (!usbMode) { setMode(true); autoStartIfNeeded() }
+                }
+                UsbManager.ACTION_USB_DEVICE_DETACHED -> {
+                    val mgr = getSystemService(USB_SERVICE) as UsbManager
+                    if (mgr.deviceList.isEmpty()) runOnUiThread {
+                        Log.i(TAG, "[USB] all devices detached — switching to WiFi mode")
+                        if (usbMode) setMode(false)
+                    }
+                }
+            }
+        }
+    }
 
     // Tap detection
     private var touchDownX = 0f
@@ -136,19 +160,18 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         val wm = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
         multicastLock = wm.createMulticastLock("PocketDisplay").also { it.acquire() }
 
-        // Restore saved mode
-        val prefs = getSharedPreferences(PREF_NAME, MODE_PRIVATE)
-        usbMode = (prefs.getString(PREF_MODE, "wifi") == "usb")
-
         binding.textureView.surfaceTextureListener = this
         binding.tvDeviceIp.text = "IP: ${getLocalIp()}"
-        updateModeUi()
 
-        // Auto-start: discovery begins immediately (no surface needed for UDP listen).
-        if (!usbMode) startDiscovery()
+        // Auto-detect connection mode: USB if a host is connected, otherwise WiFi.
+        detectAndSetMode()
 
-        binding.btnModeWifi.setOnClickListener { setMode(false) }
-        binding.btnModeUsb.setOnClickListener  { setMode(true)  }
+        val usbFilter = IntentFilter().apply {
+            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+        }
+        ContextCompat.registerReceiver(this, usbReceiver, usbFilter, ContextCompat.RECEIVER_EXPORTED)
+
         binding.btnConnect.setOnClickListener  { toggleReceiver() }
         binding.navAbout.setOnClickListener {
             binding.panelDashboard.visibility = View.GONE
@@ -174,6 +197,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
 
     private fun setMode(usb: Boolean) {
         if (usbMode == usb) return
+        if (receiver?.isRunning == true || tcpReceiver?.isRunning == true) stopReceiver()
         usbMode = usb
         getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit()
             .putString(PREF_MODE, if (usb) "usb" else "wifi").apply()
@@ -189,12 +213,16 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     }
 
     private fun updateModeUi() {
-        val activeColor  = 0x33FF4500.toInt()
-        val inactiveColor = android.graphics.Color.TRANSPARENT
-        binding.btnModeWifi.alpha = if (usbMode) 0.4f else 1f
-        binding.btnModeUsb.alpha  = if (usbMode) 1f else 0.4f
-        binding.btnModeWifi.setBackgroundColor(if (usbMode) inactiveColor else activeColor)
-        binding.btnModeUsb.setBackgroundColor(if (usbMode) activeColor else inactiveColor)
+        binding.tvConnectionMode.text = if (usbMode) "USB" else "Wi-Fi"
+    }
+
+    private fun detectAndSetMode() {
+        val mgr = getSystemService(USB_SERVICE) as UsbManager
+        usbMode = mgr.deviceList.isNotEmpty()
+        getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit()
+            .putString(PREF_MODE, if (usbMode) "usb" else "wifi").apply()
+        updateModeUi()
+        if (!usbMode) startDiscovery()
     }
 
     // ── Streaming control ────────────────────────────────────────────────────
@@ -737,6 +765,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
 
     override fun onDestroy() {
         super.onDestroy()
+        unregisterReceiver(usbReceiver)
         statsHandler.removeCallbacks(statsRunnable)
         stopReceiver()
         multicastLock?.release()

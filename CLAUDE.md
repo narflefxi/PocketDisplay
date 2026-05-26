@@ -46,13 +46,13 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 
 ## Known Issues (Open)
 - #20: First-time setup requires too many manual steps (bug)
-- #19: Auto-switch between USB and Wi-Fi connection modes based on USB detection (enhancement)
 - #8: Add custom resolution selection for streaming (enhancement)
 - #5: Connection not seamless on startup (bug)
 - #2: Find better cursor type for Android (enhancement)
 - #1: Cursor position mismatch on Android (touch vs mouse) (bug)
 
 ## Recently Fixed
+- #19: Auto-switch USB/WiFi — UsbManager detection on startup + BroadcastReceiver for plug/unplug ✅
 - #18: WiFi black screen on reconnect (android_ready not reset) ✅
 - #17: Display ghosted/soft — sharper output ✅
 - #16: Android-first USB connection deadlock ✅

@@ -264,7 +264,7 @@
                     android:layout_marginStart="10dp" />
             </LinearLayout>
 
-            <!-- Mode toggle at bottom of sidebar -->
+            <!-- Connection mode indicator (auto-detected; read-only) -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="0dp"
@@ -281,31 +281,26 @@
                     android:textColor="#666666"
                     android:textSize="10sp"
                     android:letterSpacing="0.1"
-                    android:layout_marginBottom="8dp" />
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="36dp"
-                    android:orientation="horizontal"
-                    android:background="#2A2A2A">
-                    <Button
-                        android:id="@+id/btnModeWifi"
-                        android:layout_width="0dp"
-                        android:layout_height="match_parent"
-                        android:layout_weight="1"
-                        android:text="WiFi"
-                        android:textSize="11sp"
-                        android:textColor="#FFFFFF"
-                        style="@style/Widget.AppCompat.Button.Borderless" />
-                    <Button
-                        android:id="@+id/btnModeUsb"
-                        android:layout_width="0dp"
-                        android:layout_height="match_parent"
-                        android:layout_weight="1"
-                        android:text="USB"
-                        android:textSize="11sp"
-                        android:textColor="#FFFFFF"
-                        style="@style/Widget.AppCompat.Button.Borderless" />
-                </LinearLayout>
+                    android:layout_marginBottom="6dp" />
+                <TextView
+                    android:id="@+id/tvConnectionMode"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Wi-Fi"
+                    android:textColor="#FF3B30"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+                <!-- Hidden; kept for binding compatibility -->
+                <Button
+                    android:id="@+id/btnModeWifi"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:visibility="gone" />
+                <Button
+                    android:id="@+id/btnModeUsb"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:visibility="gone" />
             </LinearLayout>
         </LinearLayout>
 
