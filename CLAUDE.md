@@ -45,23 +45,23 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 - Auto-reconnect: working
 
 ## Known Issues (Open)
-- #17: Display ghosted/soft — needs sharper output
-- #12: Remove Quick Actions from Android Dashboard
-- #13: Add About screen to Android app
-- #8: Custom resolution selection
-- #5: Connection not seamless on startup
-- #4: Cursor type issue on Android
-- #1: Cursor position mismatch
+- #20: First-time setup requires too many manual steps (bug)
+- #19: Auto-switch between USB and Wi-Fi connection modes based on USB detection (enhancement)
+- #8: Add custom resolution selection for streaming (enhancement)
+- #5: Connection not seamless on startup (bug)
+- #2: Find better cursor type for Android (enhancement)
+- #1: Cursor position mismatch on Android (touch vs mouse) (bug)
 
 ## Recently Fixed
-- #20: First-time setup now handles VDD setup, adb reverse, x264 runtime DLL, and GUI setup status ✅
-- #19: Extended mode fresh Windows install missing virtual display driver ✅
 - #18: WiFi black screen on reconnect (android_ready not reset) ✅
+- #17: Display ghosted/soft — sharper output ✅
 - #16: Android-first USB connection deadlock ✅
-- #14: Black screen on re-launch ✅
 - #15: USB reconnect works consistently ✅
-- #10: Android app icon (black bg + centered) ✅
+- #14: Black screen on re-launch ✅
+- #13: Add About screen to Android app ✅
+- #12: Remove Quick Actions (Keyboard & Mouse) from Android Dashboard ✅
 - #11: Windows taskbar icon ✅
+- #10: Android app icon (black bg + centered) ✅
 - #9: One-click launch from GUI ✅
 - #7: Video blurry/ghosting ✅
 
