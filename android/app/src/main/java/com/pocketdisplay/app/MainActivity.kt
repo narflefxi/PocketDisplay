@@ -62,7 +62,26 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
                 Thread {
                     if (tcpProbe()) runOnUiThread {
                         Log.i(TAG, "[USB] poll: port 7777 reachable — switching to USB mode")
-                        if (!usbMode) { setMode(true); autoStartIfNeeded() }
+                        if (!usbMode) {
+                            stopReceiver()
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                setMode(true)
+                                autoStartIfNeeded()
+                            }, 600)
+                        }
+                    }
+                }.start()
+            } else if (usbMode && receiver?.isRunning != true && tcpReceiver?.isRunning != true) {
+                Thread {
+                    if (!tcpProbe()) runOnUiThread {
+                        Log.i(TAG, "[USB] poll: port 7777 unreachable — switching to WiFi mode")
+                        if (usbMode) {
+                            stopReceiver()
+                            Handler(Looper.getMainLooper()).postDelayed({
+                                setMode(false)
+                                startDiscovery()
+                            }, 600)
+                        }
                     }
                 }.start()
             }
