@@ -125,7 +125,7 @@ void TcpVideoServer::AcceptLoop() {
             android_w_ = aW; android_h_ = aH;
             {
                 std::lock_guard<std::mutex> lk(mode_mu_);
-                if (mode_value_ < 0) mode_value_ = val;  // keep first
+                mode_value_ = val;  // always update on each new connection
             }
             mode_cv_.notify_one();
             std::cout << "  [USB/video] Android connected — mode="

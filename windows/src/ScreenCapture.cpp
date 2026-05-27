@@ -104,6 +104,10 @@ bool ScreenCapture::CaptureFrame(std::vector<uint8_t>& bgra_out, int& width, int
     bgra_out.resize(static_cast<size_t>(width_) * height_ * 4);
 
     const auto* src = static_cast<const uint8_t*>(mapped.pData);
+    if (!src || mapped.RowPitch < static_cast<UINT>(width_ * 4)) {
+        context_->Unmap(staging_.Get(), 0);
+        return false;
+    }
     uint8_t*    dst = bgra_out.data();
     const size_t row_bytes = static_cast<size_t>(width_) * 4;
 

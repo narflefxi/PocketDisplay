@@ -1,5 +1,15 @@
 #include "Encoder.h"
 #include <cstring>
+#include <excpt.h>
+
+static int SafeX264Encode(x264_t* h, x264_nal_t** pp_nal, int* pi_nal,
+                          x264_picture_t* pic_in, x264_picture_t* pic_out) {
+    __try {
+        return x264_encoder_encode(h, pp_nal, pi_nal, pic_in, pic_out);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -2;  // AV inside x264 — signal caller to skip frame
+    }
+}
 
 Encoder::~Encoder() {
     Close();
@@ -86,12 +96,13 @@ void Encoder::BgraToI420(const uint8_t* bgra,
 
 bool Encoder::EncodeFrame(const uint8_t* bgra,
                            std::vector<uint8_t>& nal_out, bool& is_keyframe) {
+    if (!bgra || !handle_) return false;
     BgraToI420(bgra, pic_in_.img.plane[0], pic_in_.img.plane[1], pic_in_.img.plane[2]);
     pic_in_.i_pts = pts_++;
 
     x264_nal_t* nals  = nullptr;
     int         count = 0;
-    const int   frame_size = x264_encoder_encode(handle_, &nals, &count, &pic_in_, &pic_out_);
+    const int   frame_size = SafeX264Encode(handle_, &nals, &count, &pic_in_, &pic_out_);
     if (frame_size < 0) return false;
 
     nal_out.clear();

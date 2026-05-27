@@ -58,7 +58,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     private val usbPollHandler = Handler(Looper.getMainLooper())
     private val usbPollRunnable = object : Runnable {
         override fun run() {
-            if (!usbMode && receiver?.isRunning != true && tcpReceiver?.isRunning != true) {
+            if (!usbMode) {
                 Thread {
                     if (tcpProbe()) runOnUiThread {
                         Log.i(TAG, "[USB] poll: port 7777 reachable — switching to USB mode")
@@ -71,7 +71,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
                         }
                     }
                 }.start()
-            } else if (usbMode && receiver?.isRunning != true && tcpReceiver?.isRunning != true) {
+            } else if (usbMode) {
                 Thread {
                     if (!tcpProbe()) runOnUiThread {
                         Log.i(TAG, "[USB] poll: port 7777 unreachable — switching to WiFi mode")
@@ -752,6 +752,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
 
     /** Sends mode choice to Windows via UDP (WiFi only). USB sends mode over the video TCP socket. */
     private fun sendModeSelection(hostIp: String, mode: String) {
+        Log.i(TAG, "[WiFi] sendModeSelection: mode=\"$mode\" -> $hostIp")
         discoverClient?.sendMode(hostIp, mode)
         modeSelected = true
         autoStartIfNeeded()

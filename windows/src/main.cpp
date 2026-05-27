@@ -280,12 +280,18 @@ static DiscResult RunDiscovery(const std::string& local_ip, uint16_t video_port)
             SetColor(CYAN);
             std::cout << "  Waiting for display mode selection on Android (30 s → Mirror)...\n";
             ResetColor();
-        } else if (phase2 && msg.rfind("POCKETDISPLAY_MODE:", 0) == 0) {
-            const std::string mode = msg.substr(19);
-            result.extend = (mode == "extend");
+        } else if (msg.rfind("POCKETDISPLAY_MODE:", 0) == 0) {
+            const std::string mode_str = msg.substr(19);
             SetColor(GREEN);
-            std::cout << "  Mode: " << (result.extend ? "Extended" : "Mirror") << "\n";
+            std::cout << "  [WiFi] MODE received: \"" << mode_str << "\"  -> "
+                      << (mode_str == "extend" ? "Extended" : "Mirror") << "\n";
             ResetColor();
+            result.extend = (mode_str == "extend");
+            if (result.android_ip.empty()) {
+                char ip_buf[INET_ADDRSTRLEN] = {};
+                if (inet_ntop(AF_INET, &from.sin_addr, ip_buf, sizeof(ip_buf)))
+                    result.android_ip = ip_buf;
+            }
             break;
         }
     }
@@ -765,6 +771,7 @@ int main(int argc, char* argv[]) {
 
     const int cap_w = capture.GetWidth();
     const int cap_h = capture.GetHeight();
+    std::atomic<int> stream_w{cap_w}, stream_h{cap_h};
     g_gui.capW.store(cap_w);
     g_gui.capH.store(cap_h);
     g_gui.streaming.store(true);
@@ -777,8 +784,8 @@ int main(int argc, char* argv[]) {
             // for a signal from Windows.  VideoDecoder.configure() deduplicates
             // identical SPS: same codec → just re-ACKs; fresh decoder → full init.
             uint8_t dims[12];
-            const uint32_t sw = htonl(static_cast<uint32_t>(cap_w));
-            const uint32_t sh = htonl(static_cast<uint32_t>(cap_h));
+            const uint32_t sw = htonl(static_cast<uint32_t>(stream_w.load()));
+            const uint32_t sh = htonl(static_cast<uint32_t>(stream_h.load()));
             const uint32_t sf = htonl(extended ? 1u : 0u);
             std::memcpy(dims,     &sw, 4);
             std::memcpy(dims + 4, &sh, 4);
@@ -929,6 +936,22 @@ int main(int argc, char* argv[]) {
 
         int w = 0, h = 0;
         if (!capture.CaptureFrame(bgra_buf, w, h)) continue;
+
+        if (w != stream_w.load() || h != stream_h.load()) {
+            SetColor(YELLOW);
+            std::cout << "\n[DBG] Resolution changed " << stream_w.load() << "x" << stream_h.load()
+                      << " -> " << w << "x" << h << "  re-initializing encoder\n";
+            ResetColor();
+            encoder->Close();
+            if (!encoder->Initialize(w, h, target_fps, bitrate_kbps)) {
+                std::cerr << "  [ERROR] Encoder re-init after resolution change failed\n";
+                continue;
+            }
+            stream_w.store(w);
+            stream_h.store(h);
+            android_ready = false;  // trigger resend_thread to push new codec config + dims
+            continue;
+        }
 
         bool is_keyframe = false;
         if (!encoder->EncodeFrame(bgra_buf.data(), nal_buf, is_keyframe)) continue;
