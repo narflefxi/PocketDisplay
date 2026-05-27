@@ -186,12 +186,15 @@ void StartUsbMonitorThread(uint16_t video_port, uint16_t touch_port, std::atomic
             if (!was_connected && is_connected) {
                 std::cout << "[USB Monitor] device connected \u2014 re-running adb reverse\n" << std::flush;
                 const std::string err = RunAdbUsbReverse(video_port, touch_port);
-                if (!err.empty())
-                    std::cout << "[USB Monitor] adb reverse failed: " << err << "\n" << std::flush;
-                else
-                    std::cout << "[USB Monitor] adb reverse OK\n" << std::flush;
+                if (!err.empty()) {
+                    std::cout << "[USB Monitor] adb reverse re-run: FAIL \u2014 " << err << "\n" << std::flush;
+                } else {
+                    std::cout << "[USB Monitor] adb reverse re-run: SUCCESS \u2014 "
+                              << "Android should now reach Windows on ports "
+                              << video_port << "/" << touch_port << "\n" << std::flush;
+                }
             } else if (was_connected && !is_connected) {
-                std::cout << "[USB Monitor] device disconnected\n" << std::flush;
+                std::cout << "[USB Monitor] device disconnected \u2014 Android will switch to WiFi probe\n" << std::flush;
             }
             was_connected = is_connected;
         }

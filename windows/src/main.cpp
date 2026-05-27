@@ -924,6 +924,14 @@ int main(int argc, char* argv[]) {
     auto       next_frame     = std::chrono::steady_clock::now();
     const auto start_time     = next_frame;
 
+    // Hysteresis for resolution changes: require 3 consecutive frames at the new size
+    // before re-initializing the encoder.  Spurious single-frame size changes (common
+    // during DXGI desktop duplication startup or VDD transitions) caused unnecessary
+    // encoder re-inits that triggered Android decoder reconfiguration → green/black frames.
+    int pending_resize_w     = 0;
+    int pending_resize_h     = 0;
+    int resize_stable_count  = 0;
+
     try {
     while (g_running) {
         const auto now = std::chrono::steady_clock::now();
@@ -938,19 +946,50 @@ int main(int argc, char* argv[]) {
         if (!capture.CaptureFrame(bgra_buf, w, h)) continue;
 
         if (w != stream_w.load() || h != stream_h.load()) {
-            SetColor(YELLOW);
-            std::cout << "\n[DBG] Resolution changed " << stream_w.load() << "x" << stream_h.load()
-                      << " -> " << w << "x" << h << "  re-initializing encoder\n";
-            ResetColor();
-            encoder->Close();
-            if (!encoder->Initialize(w, h, target_fps, bitrate_kbps)) {
-                std::cerr << "  [ERROR] Encoder re-init after resolution change failed\n";
-                continue;
+            // Accumulate consecutive frames at the new size (hysteresis).
+            if (w == pending_resize_w && h == pending_resize_h) {
+                ++resize_stable_count;
+            } else {
+                // New candidate size — reset counter.
+                pending_resize_w    = w;
+                pending_resize_h    = h;
+                resize_stable_count = 1;
+                SetColor(YELLOW);
+                std::cout << "\n[DBG] Resolution candidate: "
+                          << stream_w.load() << "x" << stream_h.load()
+                          << " -> " << w << "x" << h << " (1/3)\n";
+                ResetColor();
             }
-            stream_w.store(w);
-            stream_h.store(h);
-            android_ready = false;  // trigger resend_thread to push new codec config + dims
+            if (resize_stable_count >= 3) {
+                // 3 stable frames — commit the re-init.
+                SetColor(YELLOW);
+                std::cout << "\n[DBG] Resolution stable — re-initializing encoder: "
+                          << stream_w.load() << "x" << stream_h.load()
+                          << " -> " << w << "x" << h << "\n";
+                ResetColor();
+                encoder->Close();
+                if (!encoder->Initialize(w, h, target_fps, bitrate_kbps)) {
+                    std::cerr << "  [ERROR] Encoder re-init after resolution change failed\n";
+                    pending_resize_w    = 0;
+                    pending_resize_h    = 0;
+                    resize_stable_count = 0;
+                    continue;
+                }
+                stream_w.store(w);
+                stream_h.store(h);
+                android_ready       = false;  // trigger resend_thread to push new codec config + dims
+                pending_resize_w    = 0;
+                pending_resize_h    = 0;
+                resize_stable_count = 0;
+            }
             continue;
+        } else {
+            // Dimensions match stream — reset any pending resize hysteresis.
+            if (resize_stable_count > 0) {
+                resize_stable_count = 0;
+                pending_resize_w    = 0;
+                pending_resize_h    = 0;
+            }
         }
 
         bool is_keyframe = false;

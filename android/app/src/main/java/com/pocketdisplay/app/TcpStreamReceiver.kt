@@ -73,9 +73,11 @@ class TcpStreamReceiver(
                     // Send mode selection as first message so Windows reads it before streaming.
                     if (modeToSend != null) {
                         val dimSuffix = if (screenW > 0 && screenH > 0) ":$screenW:$screenH" else ""
-                        Log.i(TAG, "Sending mode: $modeToSend  screen=${screenW}x${screenH}")
-                        socket.getOutputStream().write("POCKETDISPLAY_MODE:$modeToSend$dimSuffix\n".toByteArray(Charsets.US_ASCII))
+                        val modeLine = "POCKETDISPLAY_MODE:$modeToSend$dimSuffix\n"
+                        Log.i(TAG, "[MODE] USB TCP: sending '$modeLine' (${modeLine.toByteArray(Charsets.US_ASCII).size} bytes)")
+                        socket.getOutputStream().write(modeLine.toByteArray(Charsets.US_ASCII))
                         socket.getOutputStream().flush()
+                        Log.i(TAG, "[MODE] USB TCP: mode sent OK")
                     }
 
                     val input = DataInputStream(socket.getInputStream())

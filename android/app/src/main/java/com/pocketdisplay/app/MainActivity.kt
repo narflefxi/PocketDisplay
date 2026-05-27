@@ -61,13 +61,22 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
             if (!usbMode) {
                 Thread {
                     if (tcpProbe()) runOnUiThread {
-                        Log.i(TAG, "[USB] poll: port 7777 reachable — switching to USB mode")
                         if (!usbMode) {
-                            stopReceiver()
-                            Handler(Looper.getMainLooper()).postDelayed({
+                            if (firstFrameReceived) {
+                                // WiFi receiver is actively streaming — stop it cleanly, then switch.
+                                Log.i(TAG, "[USB] poll: port 7777 reachable — switching from active WiFi stream")
+                                stopReceiver()
+                                Handler(Looper.getMainLooper()).postDelayed({
+                                    setMode(true)
+                                    autoStartIfNeeded()
+                                }, 600)
+                            } else {
+                                // WiFi is idle or connecting (not yet streaming) — switch directly.
+                                // stopReceiver() is unnecessary and was corrupting state on Android-first.
+                                Log.i(TAG, "[USB] poll: port 7777 reachable — switching from idle WiFi state")
                                 setMode(true)
                                 autoStartIfNeeded()
-                            }, 600)
+                            }
                         }
                     }
                 }.start()
@@ -752,8 +761,27 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
 
     /** Sends mode choice to Windows via UDP (WiFi only). USB sends mode over the video TCP socket. */
     private fun sendModeSelection(hostIp: String, mode: String) {
-        Log.i(TAG, "[WiFi] sendModeSelection: mode=\"$mode\" -> $hostIp")
-        discoverClient?.sendMode(hostIp, mode)
+        Log.i(TAG, "[MODE] sendModeSelection: mode='$mode' -> $hostIp:${DiscoveryClient.DISCOVERY_PORT}")
+        val dc = discoverClient
+        if (dc != null) {
+            dc.sendMode(hostIp, mode)
+        } else {
+            // discoverClient may have been nulled (e.g. by stopReceiver during USB probe race).
+            // Fall back to a direct UDP send so the mode always reaches Windows.
+            Log.w(TAG, "[MODE] discoverClient is null — sending mode directly via UDP")
+            Thread {
+                try {
+                    java.net.DatagramSocket().use { s ->
+                        val bytes = "POCKETDISPLAY_MODE:$mode".toByteArray(Charsets.US_ASCII)
+                        s.send(java.net.DatagramPacket(bytes, bytes.size,
+                            java.net.InetAddress.getByName(hostIp), DiscoveryClient.DISCOVERY_PORT))
+                        Log.i(TAG, "[MODE] direct UDP fallback sent OK: '$mode' -> $hostIp")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "[MODE] direct UDP fallback failed: ${e.message}")
+                }
+            }.also { it.isDaemon = true; it.start() }
+        }
         modeSelected = true
         autoStartIfNeeded()
     }

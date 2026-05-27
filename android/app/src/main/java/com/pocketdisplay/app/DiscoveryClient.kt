@@ -100,13 +100,13 @@ class DiscoveryClient(private val onHostFound: (hostIp: String, videoPort: Int) 
         Thread {
             try {
                 DatagramSocket().use { s ->
-                    val bytes = "POCKETDISPLAY_MODE:$mode".toByteArray()
+                    val bytes = "POCKETDISPLAY_MODE:$mode".toByteArray(Charsets.US_ASCII)
                     s.send(DatagramPacket(bytes, bytes.size,
                         InetAddress.getByName(hostIp), DISCOVERY_PORT))
-                    Log.d(TAG, "Mode sent: $mode -> $hostIp")
+                    Log.i(TAG, "[MODE] UDP sent: 'POCKETDISPLAY_MODE:$mode' -> $hostIp:$DISCOVERY_PORT")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "sendMode error: ${e.message}")
+                Log.e(TAG, "[MODE] sendMode error: ${e.message}")
             }
         }.also { it.isDaemon = true; it.start() }
     }

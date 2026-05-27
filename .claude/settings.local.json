@@ -36,7 +36,8 @@
       "Bash(Write-Output \"launched\")",
       "PowerShell(Start-Process -FilePath \"C:\\\\Projects\\\\PocketDisplay\\\\windows\\\\build\\\\Release\\\\PocketDisplay.exe\" -ArgumentList \"--usb\" -RedirectStandardOutput \"C:\\\\Projects\\\\PocketDisplay\\\\win_log.txt\" -RedirectStandardError \"C:\\\\Projects\\\\PocketDisplay\\\\win_err.txt\" -NoNewWindow; Write-Output \"launched\")",
       "Bash(echo \"logcat started pid=$!\")",
-      "PowerShell(Remove-Item *)"
+      "PowerShell(Remove-Item *)",
+      "PowerShell(cd C:\\\\Projects\\\\PocketDisplay\\\\android; $env:JAVA_HOME = \"C:\\\\Program Files\\\\Android\\\\Android Studio\\\\jbr\"; .\\\\gradlew assembleDebug 2>&1 | Select-Object -Last 20)"
     ]
   }
 }
