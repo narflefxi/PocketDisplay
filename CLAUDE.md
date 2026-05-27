@@ -54,6 +54,9 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 ## Recently Fixed
 - #19: Auto-switch USB/WiFi — UsbManager detection on startup + BroadcastReceiver for plug/unplug ✅
   - Follow-up: Fixed black screen/reconnect loop on WiFi→USB switch — race condition where old WiFi StreamReceiver threads were still alive when TcpStreamReceiver started. Fix: explicit stopReceiver() + 600ms postDelayed before setMode(true)+autoStartIfNeeded(). Also added reverse USB→WiFi auto-detection (probe failure → same stop+delay+setMode pattern). ✅
+  - Bug 1: Fixed adb reverse lost after USB reconnect — added StartUsbMonitorThread() in AdbUsbSetup.cpp that polls DetectUsbDevice() every 3s and re-runs RunAdbUsbReverse() on device absent→present transition. Started in main.cpp after initial adb reverse. ✅
+  - Bug 2: Extended mode logging — added raw mode-line log in TcpVideoServer::AcceptLoop() before parsing; confirmed both WiFi and USB paths parse "extend" correctly. ✅
+  - Bug 3: Fixed random Windows crashes — ScreenCapture now stores adapter_idx_/output_idx_ and guards CaptureFrame() with null check on duplication_ (re-inits on DXGI_ERROR_ACCESS_LOST / resolution change). Main loop wrapped in try-catch; crashes logged to PocketDisplay_crash.log. ✅
 - #18: WiFi black screen on reconnect (android_ready not reset) ✅
 - #17: Display ghosted/soft — sharper output ✅
 - #16: Android-first USB connection deadlock ✅
