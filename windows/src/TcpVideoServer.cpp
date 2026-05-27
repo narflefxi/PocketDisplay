@@ -106,6 +106,16 @@ void TcpVideoServer::AcceptLoop() {
             setsockopt(c, SOL_SOCKET, SO_RCVTIMEO,
                        reinterpret_cast<char*>(&zero), sizeof(zero));
 
+            // Empty mode line = TCP probe from Android usbPollRunnable (port reachability check).
+            // Discard silently: do NOT replace client_sock_, do NOT call reconnect_cb_,
+            // do NOT update mode_value_.  Without this guard the probe was closing the real
+            // streaming socket every 3 s and waking WaitForMode() with a spurious Mirror value.
+            if (line.empty()) {
+                std::cout << "  [USB/video] empty mode line (TCP probe) — discarded, streaming unaffected\n";
+                closesocket(c);
+                continue;
+            }
+
             std::cout << "  [USB/video] mode line received: \"" << line << "\"\n";
             // Parse: POCKETDISPLAY_MODE:<mode>[:<width>:<height>]
             int val = 0, aW = 0, aH = 0;
@@ -121,6 +131,11 @@ void TcpVideoServer::AcceptLoop() {
                         try { aH = std::stoi(rest.substr(p2 + 1)); } catch (...) {}
                     }
                 }
+            } else {
+                // Unrecognised line (not a probe, not our protocol) — discard too.
+                std::cout << "  [USB/video] unrecognised mode line — discarded\n";
+                closesocket(c);
+                continue;
             }
             android_w_ = aW; android_h_ = aH;
             {
@@ -129,7 +144,8 @@ void TcpVideoServer::AcceptLoop() {
             }
             mode_cv_.notify_one();
             std::cout << "  [USB/video] Android connected — mode="
-                      << (val == 1 ? "Extended" : "Mirror") << "\n";
+                      << (val == 1 ? "Extended" : "Mirror")
+                      << "  screen=" << aW << "x" << aH << "\n";
         }
 
         {

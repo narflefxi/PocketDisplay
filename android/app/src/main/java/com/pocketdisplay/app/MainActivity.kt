@@ -222,6 +222,13 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
             modeDialogShowing = false
             startDiscovery()
         } else {
+            // Always reset mode-selection state when entering USB mode, even if
+            // stopReceiver() was not called (idle WiFi → USB switch).  Without this,
+            // stale modeSelected=true / selectedMode from a prior WiFi session would
+            // bypass the mode dialog and start TcpStreamReceiver with the wrong mode.
+            modeSelected = false
+            modeDialogShowing = false
+            selectedMode = "mirror"
             discoverClient?.stop(); discoverClient = null
         }
     }
