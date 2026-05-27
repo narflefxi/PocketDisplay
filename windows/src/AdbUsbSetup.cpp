@@ -3,10 +3,13 @@
 #include <windows.h>
 #include <shlobj.h>
 
+#include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -169,4 +172,28 @@ std::string RunAdbUsbReverse(uint16_t video_port, uint16_t touch_port) {
     std::cout << "  [ADB] reverse tcp:" << touch_port << " tcp:" << touch_port << ": OK\n";
 
     return {};
+}
+
+void StartUsbMonitorThread(uint16_t video_port, uint16_t touch_port, std::atomic<bool>& running) {
+    std::thread([video_port, touch_port, &running]() {
+        bool was_connected = DetectUsbDevice();
+        while (running.load()) {
+            // Sleep 3 s in 100 ms slices so we respond to shutdown quickly.
+            for (int i = 0; i < 30 && running.load(); ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            if (!running.load()) break;
+            const bool is_connected = DetectUsbDevice();
+            if (!was_connected && is_connected) {
+                std::cout << "[USB Monitor] device connected \u2014 re-running adb reverse\n" << std::flush;
+                const std::string err = RunAdbUsbReverse(video_port, touch_port);
+                if (!err.empty())
+                    std::cout << "[USB Monitor] adb reverse failed: " << err << "\n" << std::flush;
+                else
+                    std::cout << "[USB Monitor] adb reverse OK\n" << std::flush;
+            } else if (was_connected && !is_connected) {
+                std::cout << "[USB Monitor] device disconnected\n" << std::flush;
+            }
+            was_connected = is_connected;
+        }
+    }).detach();
 }

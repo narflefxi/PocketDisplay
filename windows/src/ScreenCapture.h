@@ -28,4 +28,6 @@ private:
     int  width_  = 0;
     int  height_ = 0;
     RECT monitor_rect_ = {};
+    int  adapter_idx_ = 0;
+    int  output_idx_  = 0;
 };

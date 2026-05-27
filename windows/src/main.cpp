@@ -540,6 +540,7 @@ int main(int argc, char* argv[]) {
         strncpy_s(g_gui.setupMsg, "USB setup complete: adb reverse ready", 255);
         g_gui.setupActive.store(false);
         SetColor(GREEN); std::cout << "[USB] adb reverse OK.\n"; ResetColor();
+        StartUsbMonitorThread(port, touch_port, g_running);
 
         usb_server = std::make_unique<TcpVideoServerWrap>();
         if (!usb_server->Initialize("", port)) {
@@ -880,6 +881,31 @@ int main(int argc, char* argv[]) {
     std::cout << "\n  Streaming — press Ctrl+C to stop.\n\n";
     ResetColor();
 
+    // ── Crash log helper ─────────────────────────────────────────────────────
+
+    auto WriteCrashLog = [](const std::string& msg) {
+        char exePath[MAX_PATH] = {};
+        GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+        std::string logPath(exePath);
+        const auto sep = logPath.rfind('\\');
+        logPath = (sep != std::string::npos) ? logPath.substr(0, sep + 1) : "";
+        logPath += "PocketDisplay_crash.log";
+        HANDLE hf = CreateFileA(logPath.c_str(), GENERIC_WRITE, 0, nullptr,
+                                OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hf != INVALID_HANDLE_VALUE) {
+            SetFilePointer(hf, 0, nullptr, FILE_END);
+            SYSTEMTIME st = {};
+            GetLocalTime(&st);
+            char ts[64] = {};
+            sprintf_s(ts, sizeof(ts), "[%04d-%02d-%02d %02d:%02d:%02d] ",
+                      st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+            const std::string line = std::string(ts) + msg + "\r\n";
+            DWORD written = 0;
+            WriteFile(hf, line.c_str(), static_cast<DWORD>(line.size()), &written, nullptr);
+            CloseHandle(hf);
+        }
+    };
+
     // ── Capture / encode / send loop ─────────────────────────────────────────
 
     std::vector<uint8_t> bgra_buf, nal_buf;
@@ -891,6 +917,7 @@ int main(int argc, char* argv[]) {
     auto       next_frame     = std::chrono::steady_clock::now();
     const auto start_time     = next_frame;
 
+    try {
     while (g_running) {
         const auto now = std::chrono::steady_clock::now();
         if (now < next_frame)
@@ -923,6 +950,17 @@ int main(int argc, char* argv[]) {
             PrintStats(cur_fps, bytes_sent * 8.0 / 1000.0 / elapsed_s,
                        nal_buf.size(), enc_name, mode_name);
         }
+    }
+    } catch (const std::exception& e) {
+        const std::string msg = std::string("Exception in main loop: ") + e.what();
+        SetColor(RED); std::cerr << "\n[CRASH] " << msg << "\n"; ResetColor();
+        WriteCrashLog(msg);
+        g_running = false;
+    } catch (...) {
+        const std::string msg = "Unknown exception in main loop";
+        SetColor(RED); std::cerr << "\n[CRASH] " << msg << "\n"; ResetColor();
+        WriteCrashLog(msg);
+        g_running = false;
     }
 
     // ── Shutdown ─────────────────────────────────────────────────────────────

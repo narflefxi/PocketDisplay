@@ -7,6 +7,8 @@ ScreenCapture::~ScreenCapture() {
 }
 
 bool ScreenCapture::Initialize(int adapter_idx, int output_idx) {
+    adapter_idx_ = adapter_idx;
+    output_idx_  = output_idx;
     // Use IDXGIFactory so adapter_idx is consistent with PickMonitor's enumeration.
     Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
     HRESULT hr = CreateDXGIFactory1(__uuidof(IDXGIFactory1),
@@ -65,6 +67,12 @@ bool ScreenCapture::CreateStagingTexture(int width, int height) {
 }
 
 bool ScreenCapture::CaptureFrame(std::vector<uint8_t>& bgra_out, int& width, int& height) {
+    // If duplication was lost (DXGI_ERROR_ACCESS_LOST / device removed), attempt recovery.
+    if (!duplication_) {
+        if (!Initialize(adapter_idx_, output_idx_)) return false;
+        if (!duplication_) return false;
+    }
+
     DXGI_OUTDUPL_FRAME_INFO frame_info = {};
     Microsoft::WRL::ComPtr<IDXGIResource> resource;
 

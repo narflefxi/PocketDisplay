@@ -106,6 +106,7 @@ void TcpVideoServer::AcceptLoop() {
             setsockopt(c, SOL_SOCKET, SO_RCVTIMEO,
                        reinterpret_cast<char*>(&zero), sizeof(zero));
 
+            std::cout << "  [USB/video] mode line received: \"" << line << "\"\n";
             // Parse: POCKETDISPLAY_MODE:<mode>[:<width>:<height>]
             int val = 0, aW = 0, aH = 0;
             if (line.rfind("POCKETDISPLAY_MODE:", 0) == 0) {
