@@ -1,13 +1,28 @@
 #include "Encoder.h"
 #include <cstring>
+#include <cstdio>
 #include <excpt.h>
 
+// Wraps x264_encoder_encode in SEH so an AV inside x264 returns -2 instead of crashing.
 static int SafeX264Encode(x264_t* h, x264_nal_t** pp_nal, int* pi_nal,
                           x264_picture_t* pic_in, x264_picture_t* pic_out) {
     __try {
         return x264_encoder_encode(h, pp_nal, pi_nal, pic_in, pic_out);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return -2;  // AV inside x264 — signal caller to skip frame
+        fprintf(stderr, "[ENC] __except: AV inside x264_encoder_encode (code=0x%08lX) — frame skipped\n",
+                GetExceptionCode());
+        return -2;
+    }
+}
+
+// Wraps x264_encoder_headers in SEH — called from resend_thread, separate from main encode path.
+static int SafeX264Headers(x264_t* h, x264_nal_t** pp_nal, int* pi_nal) {
+    __try {
+        return x264_encoder_headers(h, pp_nal, pi_nal);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        fprintf(stderr, "[ENC] __except: AV inside x264_encoder_headers (code=0x%08lX) — headers skipped\n",
+                GetExceptionCode());
+        return -2;
     }
 }
 
@@ -16,11 +31,14 @@ Encoder::~Encoder() {
 }
 
 bool Encoder::Initialize(int width, int height, int fps, int bitrate_kbps) {
-    width_  = width;
-    height_ = height;
+    std::lock_guard<std::mutex> lock(mtx_);
+
+    width_       = width;
+    height_      = height;
+    pts_         = 0;
+    frame_count_ = 0;
 
     x264_param_t param;
-    // fast + zerolatency improves desktop/text clarity while keeping encoder buffering off.
     if (x264_param_default_preset(&param, "fast", "zerolatency") < 0) return false;
 
     // Screen content has hard edges (text, UI); deblocking smooths them into softness.
@@ -30,13 +48,13 @@ bool Encoder::Initialize(int width, int height, int fps, int bitrate_kbps) {
     param.i_height         = height;
     param.i_fps_num        = static_cast<uint32_t>(fps);
     param.i_fps_den        = 1;
-    param.i_keyint_max     = fps * 2;   // force keyframe every 2 s for reconnect recovery
+    param.i_keyint_max     = fps * 2;
     param.rc.i_rc_method   = X264_RC_ABR;
     param.rc.i_bitrate     = bitrate_kbps;
     param.rc.i_vbv_max_bitrate = bitrate_kbps * 2;
     param.rc.i_vbv_buffer_size = bitrate_kbps;
     param.b_annexb         = 1;
-    param.b_repeat_headers = 1;         // embed SPS/PPS in every keyframe for resilience
+    param.b_repeat_headers = 1;
     param.i_log_level      = X264_LOG_NONE;
 
     if (x264_param_apply_profile(&param, "high") < 0) return false;
@@ -57,13 +75,18 @@ bool Encoder::Initialize(int width, int height, int fps, int bitrate_kbps) {
     pic_in_.img.i_stride[1] = width / 2;
     pic_in_.img.i_stride[2] = width / 2;
 
+    fprintf(stderr, "[ENC] Initialized %dx%d @ %d fps %d kbps\n",
+            width, height, fps, bitrate_kbps);
     return true;
 }
 
 bool Encoder::GetConfigPacket(std::vector<uint8_t>& sps_pps_out) {
-    x264_nal_t* nals   = nullptr;
-    int         count  = 0;
-    if (x264_encoder_headers(handle_, &nals, &count) < 0) return false;
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (!handle_) return false;
+
+    x264_nal_t* nals  = nullptr;
+    int         count = 0;
+    if (SafeX264Headers(handle_, &nals, &count) < 0) return false;
 
     sps_pps_out.clear();
     for (int i = 0; i < count; ++i) {
@@ -96,7 +119,31 @@ void Encoder::BgraToI420(const uint8_t* bgra,
 
 bool Encoder::EncodeFrame(const uint8_t* bgra,
                            std::vector<uint8_t>& nal_out, bool& is_keyframe) {
+    std::lock_guard<std::mutex> lock(mtx_);
+
     if (!bgra || !handle_) return false;
+
+    // Validate plane buffers before touching them.
+    if (!pic_in_.img.plane[0] || !pic_in_.img.plane[1] || !pic_in_.img.plane[2]) {
+        fprintf(stderr, "[ENC] ERROR: null plane buffer (frame %llu) — skipping\n",
+                static_cast<unsigned long long>(frame_count_));
+        return false;
+    }
+    if (pic_in_.img.i_stride[0] < width_ || pic_in_.img.i_stride[1] < width_ / 2) {
+        fprintf(stderr, "[ENC] ERROR: stride mismatch stride0=%d width=%d (frame %llu) — skipping\n",
+                pic_in_.img.i_stride[0], width_,
+                static_cast<unsigned long long>(frame_count_));
+        return false;
+    }
+
+    ++frame_count_;
+    if (frame_count_ % 60 == 1) {
+        fprintf(stderr, "[ENC] frame %llu pts=%lld stride=%d size=%dx%d\n",
+                static_cast<unsigned long long>(frame_count_),
+                static_cast<long long>(pts_),
+                pic_in_.img.i_stride[0], width_, height_);
+    }
+
     BgraToI420(bgra, pic_in_.img.plane[0], pic_in_.img.plane[1], pic_in_.img.plane[2]);
     pic_in_.i_pts = pts_++;
 
@@ -117,11 +164,17 @@ bool Encoder::EncodeFrame(const uint8_t* bgra,
 }
 
 void Encoder::Close() {
+    std::lock_guard<std::mutex> lock(mtx_);
     if (!handle_) return;
     delete[] pic_in_.img.plane[0];
     delete[] pic_in_.img.plane[1];
     delete[] pic_in_.img.plane[2];
+    pic_in_.img.plane[0] = nullptr;
+    pic_in_.img.plane[1] = nullptr;
+    pic_in_.img.plane[2] = nullptr;
     x264_encoder_close(handle_);
     handle_ = nullptr;
     pts_    = 0;
+    fprintf(stderr, "[ENC] Closed (total frames encoded: %llu)\n",
+            static_cast<unsigned long long>(frame_count_));
 }

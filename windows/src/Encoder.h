@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <vector>
+#include <mutex>
 
 extern "C" {
 #include <x264.h>
@@ -22,10 +23,12 @@ private:
     void BgraToI420(const uint8_t* bgra,
                     uint8_t* y_plane, uint8_t* u_plane, uint8_t* v_plane) const;
 
-    x264_t*        handle_  = nullptr;
-    x264_picture_t pic_in_  = {};
-    x264_picture_t pic_out_ = {};
-    int            width_   = 0;
-    int            height_  = 0;
-    int64_t        pts_     = 0;
+    std::mutex     mtx_;
+    x264_t*        handle_      = nullptr;
+    x264_picture_t pic_in_      = {};
+    x264_picture_t pic_out_     = {};
+    int            width_       = 0;
+    int            height_      = 0;
+    int64_t        pts_         = 0;
+    uint64_t       frame_count_ = 0;
 };
