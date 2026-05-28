@@ -727,6 +727,8 @@ int main(int argc, char* argv[]) {
             ResetColor();
         });
     }
+    // NOTE: reconnect_cb_ is called by AcceptLoop AFTER closing old client_sock_
+    // and setting new one.  The [SOCK] log in AcceptLoop shows when this happens.
     // IMPORTANT: register callbacks BEFORE touch.Start() opens the port.
     // If Android launched before Windows, TcpTouchSender is already retrying.
     // Start() opens the port; Android can connect and fire TcpAcceptLoop in the
@@ -790,12 +792,21 @@ int main(int argc, char* argv[]) {
             std::memcpy(dims,     &sw, 4);
             std::memcpy(dims + 4, &sh, 4);
             std::memcpy(dims + 8, &sf, 4);
-            streamer->SendFrame(dims, 12, 0, pocketdisplay::FLAG_STREAM_INFO);
+
+            const bool si_ok = streamer->SendFrame(dims, 12, 0, pocketdisplay::FLAG_STREAM_INFO);
+            if (!si_ok) {
+                std::cout << "  [SOCK] resend_thread: SendFrame(stream_info) FAILED"
+                          << " — client_sock_ may be broken or not yet set\n";
+            }
 
             std::vector<uint8_t> sps_pps;
-            if (encoder->GetConfigPacket(sps_pps) && !sps_pps.empty())
-                streamer->SendFrame(sps_pps.data(), sps_pps.size(),
-                                    0, pocketdisplay::FLAG_CODEC_CONFIG);
+            if (encoder->GetConfigPacket(sps_pps) && !sps_pps.empty()) {
+                const bool cc_ok = streamer->SendFrame(sps_pps.data(), sps_pps.size(),
+                                                       0, pocketdisplay::FLAG_CODEC_CONFIG);
+                if (!cc_ok) {
+                    std::cout << "  [SOCK] resend_thread: SendFrame(codec_config) FAILED\n";
+                }
+            }
 
             for (int i = 0; i < 20 && g_running; ++i)
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));

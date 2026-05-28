@@ -59,7 +59,7 @@ bool TcpVideoServer::StartListen(uint16_t port) {
     addr.sin_port        = htons(port);
 
     if (bind(listen_sock_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR ||
-        listen(listen_sock_, 1) == SOCKET_ERROR) {
+        listen(listen_sock_, SOMAXCONN) == SOCKET_ERROR) {
         std::cerr << "  [USB/video] bind/listen on port " << port << " failed\n";
         Close();
         return false;
@@ -85,6 +85,12 @@ void TcpVideoServer::AcceptLoop() {
             break;
         }
 
+        char peer_ip[INET_ADDRSTRLEN] = {};
+        inet_ntop(AF_INET, &client_addr.sin_addr, peer_ip, sizeof(peer_ip));
+        std::cout << "  [USB/video] accepted connection from " << peer_ip
+                  << "  (client_sock_="
+                  << (client_sock_ != INVALID_SOCKET ? "SET" : "INVALID") << ")\n";
+
         int flag = 1;
         setsockopt(c, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&flag), sizeof(flag));
         int buf_size = 4 * 1024 * 1024;
@@ -97,10 +103,21 @@ void TcpVideoServer::AcceptLoop() {
                        reinterpret_cast<char*>(&rcvto), sizeof(rcvto));
             std::string line;
             char ch;
-            while (recv(c, &ch, 1, 0) == 1) {
+            int recv_result = 0;
+            while ((recv_result = recv(c, &ch, 1, 0)) == 1) {
                 if (ch == '\n') break;
                 if (ch != '\r') line += ch;
                 if (line.size() > 128) break;
+            }
+            // Log recv exit reason to diagnose probe vs real connection.
+            if (recv_result == 0) {
+                std::cout << "  [USB/video] mode-read: peer closed (FIN) — line=\"" << line << "\"\n";
+            } else if (recv_result < 0) {
+                const int err = WSAGetLastError();
+                if (err == WSAETIMEDOUT)
+                    std::cout << "  [USB/video] mode-read: 5s SO_RCVTIMEO timeout — line=\"" << line << "\"\n";
+                else
+                    std::cout << "  [USB/video] mode-read: recv error " << err << " — line=\"" << line << "\"\n";
             }
             DWORD zero = 0;
             setsockopt(c, SOL_SOCKET, SO_RCVTIMEO,
@@ -112,6 +129,7 @@ void TcpVideoServer::AcceptLoop() {
             // streaming socket every 3 s and waking WaitForMode() with a spurious Mirror value.
             if (line.empty()) {
                 std::cout << "  [USB/video] empty mode line (TCP probe) — discarded, streaming unaffected\n";
+                std::cout << "  [SOCK] closing probe socket c=" << c << " — reason: empty mode line (probe discard)\n";
                 closesocket(c);
                 continue;
             }
@@ -134,6 +152,7 @@ void TcpVideoServer::AcceptLoop() {
             } else {
                 // Unrecognised line (not a probe, not our protocol) — discard too.
                 std::cout << "  [USB/video] unrecognised mode line — discarded\n";
+                std::cout << "  [SOCK] closing unrecognised c=" << c << " — reason: unrecognised mode line\n";
                 closesocket(c);
                 continue;
             }
@@ -143,6 +162,10 @@ void TcpVideoServer::AcceptLoop() {
                 mode_value_ = val;  // always update on each new connection
             }
             mode_cv_.notify_one();
+            std::cout << "  [TCP] valid mode received: "
+                      << (val == 1 ? "Extended" : "Mirror")
+                      << " screen=" << aW << "x" << aH
+                      << " — keeping socket open, waiting for ACK\n";
             std::cout << "  [USB/video] Android connected — mode="
                       << (val == 1 ? "Extended" : "Mirror")
                       << "  screen=" << aW << "x" << aH << "\n";
@@ -150,8 +173,12 @@ void TcpVideoServer::AcceptLoop() {
 
         {
             std::lock_guard<std::mutex> lock(client_mu_);
-            if (client_sock_ != INVALID_SOCKET) closesocket(client_sock_);
+            if (client_sock_ != INVALID_SOCKET) {
+                std::cout << "  [SOCK] closing client socket — reason: new Android connection replacing old\n";
+                closesocket(client_sock_);
+            }
             client_sock_ = c;
+            std::cout << "  [SOCK] client_sock_ set to new socket " << c << "\n";
         }
         // Notify main that Android (re)connected — lets it reset android_ready
         // so the resend_thread re-sends codec config on every new connection.
@@ -220,6 +247,7 @@ void TcpVideoServer::Close() {
     {
         std::lock_guard<std::mutex> lock(client_mu_);
         if (client_sock_ != INVALID_SOCKET) {
+            std::cout << "  [SOCK] closing client socket — reason: TcpVideoServer::Close() (shutdown)\n";
             closesocket(client_sock_);
             client_sock_ = INVALID_SOCKET;
         }
