@@ -46,6 +46,12 @@ class TcpStreamReceiver(
         isRunning = true
         Log.i(TAG, "Mode=USB host=$HOST transport=TCP port=$port")
         netThread = thread(name = "TcpStreamReceiver", isDaemon = true) {
+            // Counts failed connect attempts before the first successful mode send.
+            // Reset to 0 after a successful connection so reconnects during streaming
+            // use fast (300 ms) retry rather than the slow initial-connect cadence.
+            var connectAttempt = 0
+            var modeEverSent = false
+
             // Outer reconnect loop: keeps retrying after disconnects.
             while (isRunning) {
                 var socket: Socket? = null
@@ -58,11 +64,22 @@ class TcpStreamReceiver(
                             s.connect(InetSocketAddress(HOST, port), 1500)
                             socket = s
                         } catch (_: Exception) {
-                            try { Thread.sleep(300) } catch (_: InterruptedException) {}
+                            if (!modeEverSent && modeToSend != null) {
+                                // Initial connect phase: Windows may not be ready yet.
+                                // Use 2 s intervals and surface progress to the user.
+                                connectAttempt++
+                                Log.i(TAG, "[MODE] USB send failed, retrying in 2s (attempt $connectAttempt/30)")
+                                onStatus("Connecting to Windows… (attempt $connectAttempt/30)")
+                                try { Thread.sleep(2000) } catch (_: InterruptedException) {}
+                            } else {
+                                // Reconnect during/after streaming — use fast retry.
+                                try { Thread.sleep(300) } catch (_: InterruptedException) {}
+                            }
                         }
                     }
                     if (socket == null) break
 
+                    connectAttempt = 0  // reset: successful connection
                     activeSocket = socket
                     streamW = 0; streamH = 0  // reset dims for fresh connection
                     Log.i(TAG, "TCP connected to $HOST:$port")
@@ -77,6 +94,7 @@ class TcpStreamReceiver(
                         Log.i(TAG, "[MODE] USB TCP: sending '$modeLine' (${modeLine.toByteArray(Charsets.US_ASCII).size} bytes)")
                         socket.getOutputStream().write(modeLine.toByteArray(Charsets.US_ASCII))
                         socket.getOutputStream().flush()
+                        modeEverSent = true
                         Log.i(TAG, "[MODE] USB TCP: mode sent OK")
                     }
 

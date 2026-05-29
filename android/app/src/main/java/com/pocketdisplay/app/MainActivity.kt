@@ -747,6 +747,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
                 if (usbMode) {
                     selectedMode = "mirror"
                     modeSelected = true
+                    updateStatus("Connecting to Windows…")
                     autoStartIfNeeded()
                 } else {
                     sendModeSelection(hostIp, "mirror")
@@ -757,6 +758,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
                 if (usbMode) {
                     selectedMode = "extend"
                     modeSelected = true
+                    updateStatus("Connecting to Windows…")
                     autoStartIfNeeded()
                 } else {
                     sendModeSelection(hostIp, "extend")
