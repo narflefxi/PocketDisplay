@@ -51,6 +51,11 @@ class TcpStreamReceiver(
     // bypassing onWindowsReady so the dialog is not shown again.
     @Volatile private var committedMode: String? = null
 
+    // True once mode has been sent at least once in this receiver's lifetime.
+    // Used to distinguish a fresh connection (show dialog) from a within-session
+    // reconnect (reuse committedMode without re-showing dialog).
+    @Volatile private var sessionStarted = false
+
     /** Called by MainActivity when the user taps Mirror or Extended. */
     fun setPendingMode(mode: String) {
         pendingMode = mode
@@ -67,6 +72,14 @@ class TcpStreamReceiver(
 
             // Outer reconnect loop: keeps retrying after disconnects.
             while (isRunning) {
+                // New session (stopReceiver was called, new receiver created): ensure
+                // mode state is fresh so the dialog is shown.  After the first mode
+                // send, sessionStarted=true and committedMode is reused on reconnect.
+                if (!sessionStarted) {
+                    committedMode = null
+                    pendingMode = null
+                }
+
                 var socket: Socket? = null
                 try {
                     // Connect (retry until success or stopped).
@@ -148,6 +161,7 @@ class TcpStreamReceiver(
                         // write succeeded but the socket drops before Windows reads it, the next
                         // reconnect can resend without re-showing the dialog.
                         committedMode = modeActual
+                        sessionStarted = true
                         modeEverSent = true
                         Log.i(TAG, "[MODE] USB TCP: mode sent OK")
                     }

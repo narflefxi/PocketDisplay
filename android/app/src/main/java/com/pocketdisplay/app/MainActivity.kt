@@ -314,8 +314,8 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
                 onCodecConfigured = ::onCodecConfigured,
                 onFirstFrame      = ::onFirstFrame,
                 onMode            = ::onStreamMode,
-                onWindowsReady    = if (!modeSelected) { { runOnUiThread { onUsbWindowsReady() } } } else null,
-                modeToSend        = if (modeSelected) selectedMode else null,
+                onWindowsReady    = { runOnUiThread { onUsbWindowsReady() } },
+                modeToSend        = null,
                 screenW           = dm.widthPixels,
                 screenH           = dm.heightPixels
             )
@@ -445,6 +445,12 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     }
 
     private fun onCodecConfigured() {
+        if (!usbMode && firstFrameReceived) {
+            // WiFi: codec reconfigured while already streaming → Windows restarted.
+            // Post stopReceiver() so discovery restarts and the mode dialog reappears.
+            firstFrameHandler.post { stopReceiver() }
+            return
+        }
         firstFrameReceived = false
         firstFrameHandler.removeCallbacks(ackRetryRunnable)
         touchSender?.sendAck()                               // immediate first attempt
