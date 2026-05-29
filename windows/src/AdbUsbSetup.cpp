@@ -200,3 +200,22 @@ void StartUsbMonitorThread(uint16_t video_port, uint16_t touch_port, std::atomic
         }
     }).detach();
 }
+
+void ClearAdbReverse() {
+    const fs::path adb = FindAdbExe();
+    if (adb.empty()) return;
+
+    std::wstring cmd = Quote(adb) + L" reverse --remove-all";
+    STARTUPINFOW si = {};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi = {};
+
+    if (!CreateProcessW(nullptr, cmd.data(), nullptr, nullptr,
+                        FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) return;
+
+    // 2 s max — adb reverse --remove-all should complete in milliseconds.
+    WaitForSingleObject(pi.hProcess, 2000);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+    std::cout << "[ADB] reverse --remove-all: cleared on shutdown\n" << std::flush;
+}

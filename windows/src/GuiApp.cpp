@@ -1,4 +1,5 @@
 #include "GuiApp.h"
+#include "AdbUsbSetup.h"
 #include "resource.h"
 #include <wincodec.h>
 #include <thread>
@@ -435,7 +436,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
 
     case WM_CLOSE:
-        ExitProcess(0);  // ← FIX: terminate cleanly saat user klik X
+        ClearAdbReverse();  // clear stale rules before process exits
+        ExitProcess(0);
         return 0;
 
     case WM_DESTROY:

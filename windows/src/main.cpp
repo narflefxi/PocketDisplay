@@ -1051,6 +1051,7 @@ int main(int argc, char* argv[]) {
     g_gui.connected.store(false);
     strncpy_s(g_gui.statusMsg, "Stopped", 255);
     std::cout << "\n\n  Shutting down...\n";
+    if (usb_mode) ClearAdbReverse();  // prevent stale rules causing Android to show dialog prematurely
     if (resend_thread.joinable()) resend_thread.join();
     if (cursor_thread.joinable()) cursor_thread.join();
     encoder->Close();

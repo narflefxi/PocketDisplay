@@ -9,3 +9,5 @@ std::string RunAdbUsbReverse(uint16_t video_port, uint16_t touch_port);
 bool DetectUsbDevice();
 // Starts a background thread that re-runs adb reverse whenever a USB device reconnects.
 void StartUsbMonitorThread(uint16_t video_port, uint16_t touch_port, std::atomic<bool>& running);
+// Clears all adb reverse rules.  Call on shutdown to prevent stale rules in the next session.
+void ClearAdbReverse();
