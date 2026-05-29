@@ -548,6 +548,15 @@ int main(int argc, char* argv[]) {
         SetColor(GREEN); std::cout << "[USB] adb reverse OK.\n"; ResetColor();
         StartUsbMonitorThread(port, touch_port, g_running);
 
+        // Give Android's stale socket time to detect the RST from --remove-all
+        // and start retrying before we open the listener. Without this, Android's
+        // existing WiFi-mode TCP socket (bound via the old reverse rule) hangs
+        // and never switches to USB.
+        SetColor(GRAY);
+        std::cout << "[USB] Waiting 500 ms for Android to detect stale socket disconnect...\n";
+        ResetColor();
+        Sleep(500);
+
         usb_server = std::make_unique<TcpVideoServerWrap>();
         if (!usb_server->Initialize("", port)) {
             SetColor(RED);
