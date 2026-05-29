@@ -293,6 +293,10 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         if (usbMode) {
             @Suppress("DEPRECATION")
             val dm = android.util.DisplayMetrics().also { windowManager.defaultDisplay.getRealMetrics(it) }
+            // If mode already chosen (reconnect scenario), pass it directly so it is sent on
+            // connect without going through the dialog.  If mode not yet known, pass
+            // onWindowsReady so the dialog is shown only after TCP connection is confirmed
+            // (Windows is listening and ready to receive the mode string).
             tcpReceiver = TcpStreamReceiver(
                 surface,
                 port              = StreamReceiver.PORT,
@@ -304,7 +308,8 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
                 onCodecConfigured = ::onCodecConfigured,
                 onFirstFrame      = ::onFirstFrame,
                 onMode            = ::onStreamMode,
-                modeToSend        = selectedMode,
+                onWindowsReady    = if (!modeSelected) { { runOnUiThread { onUsbWindowsReady() } } } else null,
+                modeToSend        = if (modeSelected) selectedMode else null,
                 screenW           = dm.widthPixels,
                 screenH           = dm.heightPixels
             )
@@ -709,17 +714,27 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         if (binding.textureView.surfaceTexture != null) autoStartIfNeeded()
     }
 
-    /** Starts receiver once all conditions are met: surface ready + mode chosen. */
+    /** Starts receiver once all conditions are met: surface ready + (USB or WiFi with host). */
     private fun autoStartIfNeeded() {
         if (receiver?.isRunning == true || tcpReceiver?.isRunning == true) return
         if (binding.textureView.surfaceTexture == null) return
-        if (!modeSelected) {
-            // USB: surface is ready — trigger mode dialog now (once)
-            if (usbMode && !modeDialogShowing) showModeDialog("127.0.0.1")
+        if (usbMode) {
+            // USB: start TcpStreamReceiver immediately regardless of modeSelected.
+            // If mode not yet known, TcpStreamReceiver calls onWindowsReady once
+            // connected, which shows the dialog at the right moment (Windows confirmed
+            // ready).  If mode already known (reconnect after prior selection), it is
+            // passed as modeToSend and sent immediately on connect.
+            startReceiver()
             return
         }
-        if (!usbMode && discoveredHostIp == null) return
+        if (!modeSelected) return
+        if (discoveredHostIp == null) return
         startReceiver()
+    }
+
+    /** Called from TcpStreamReceiver's onWindowsReady callback (UI thread). */
+    private fun onUsbWindowsReady() {
+        if (!modeDialogShowing && !modeSelected) showModeDialog("127.0.0.1")
     }
 
     /** Begins UDP discovery: listens for Windows broadcasts and prompts for mode selection. */
@@ -748,7 +763,15 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
                     selectedMode = "mirror"
                     modeSelected = true
                     updateStatus("Connecting to Windows…")
-                    autoStartIfNeeded()
+                    // TcpStreamReceiver is already connected and waiting for mode.
+                    // setPendingMode wakes its wait loop so mode is sent immediately.
+                    if (tcpReceiver?.isRunning == true) {
+                        tcpReceiver?.setPendingMode("mirror")
+                    } else {
+                        // Fallback: receiver not running (e.g. surface not ready yet);
+                        // autoStartIfNeeded will create it with modeToSend set.
+                        autoStartIfNeeded()
+                    }
                 } else {
                     sendModeSelection(hostIp, "mirror")
                 }
@@ -759,7 +782,11 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
                     selectedMode = "extend"
                     modeSelected = true
                     updateStatus("Connecting to Windows…")
-                    autoStartIfNeeded()
+                    if (tcpReceiver?.isRunning == true) {
+                        tcpReceiver?.setPendingMode("extend")
+                    } else {
+                        autoStartIfNeeded()
+                    }
                 } else {
                     sendModeSelection(hostIp, "extend")
                 }

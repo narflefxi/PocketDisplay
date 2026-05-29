@@ -20,6 +20,9 @@ class TcpStreamReceiver(
     onCodecConfigured: (() -> Unit)? = null,
     onFirstFrame: (() -> Unit)? = null,
     private val onMode: ((Int) -> Unit)? = null,
+    // Called (on the receiver thread) when TCP connects and Windows is confirmed ready to receive
+    // mode. If null, modeToSend is sent immediately after connect (legacy / reconnect path).
+    private val onWindowsReady: (() -> Unit)? = null,
     private val modeToSend: String? = null,
     private val screenW: Int = 0,
     private val screenH: Int = 0
@@ -36,10 +39,22 @@ class TcpStreamReceiver(
     private val decoder = VideoDecoder(surface, onStatus, onDimensions, onCodecConfigured, onFirstFrame)
 
     private var videoPackets = 0L
-    // Stream dimensions received from Windows type-2 (stream info) packet;
-    // forwarded to decoder.configure() so MediaFormat uses the correct size.
     private var streamW = 0
     private var streamH = 0
+
+    // Set by MainActivity after the user taps the mode dialog (setPendingMode).
+    // Kept non-null after being read so reconnects can resend without re-showing the dialog.
+    @Volatile private var pendingMode: String? = null
+
+    // Set after mode is successfully written to the socket.
+    // On reconnect (same TcpStreamReceiver object) this is reused directly,
+    // bypassing onWindowsReady so the dialog is not shown again.
+    @Volatile private var committedMode: String? = null
+
+    /** Called by MainActivity when the user taps Mirror or Extended. */
+    fun setPendingMode(mode: String) {
+        pendingMode = mode
+    }
 
     fun start() {
         if (isRunning) return
@@ -47,8 +62,6 @@ class TcpStreamReceiver(
         Log.i(TAG, "Mode=USB host=$HOST transport=TCP port=$port")
         netThread = thread(name = "TcpStreamReceiver", isDaemon = true) {
             // Counts failed connect attempts before the first successful mode send.
-            // Reset to 0 after a successful connection so reconnects during streaming
-            // use fast (300 ms) retry rather than the slow initial-connect cadence.
             var connectAttempt = 0
             var modeEverSent = false
 
@@ -65,38 +78,84 @@ class TcpStreamReceiver(
                             socket = s
                         } catch (_: Exception) {
                             if (!modeEverSent && modeToSend != null) {
-                                // Initial connect phase: Windows may not be ready yet.
-                                // Use 2 s intervals and surface progress to the user.
+                                // Legacy path: slow retry with user-visible progress.
                                 connectAttempt++
                                 Log.i(TAG, "[MODE] USB send failed, retrying in 2s (attempt $connectAttempt/30)")
                                 onStatus("Connecting to Windows… (attempt $connectAttempt/30)")
                                 try { Thread.sleep(2000) } catch (_: InterruptedException) {}
                             } else {
-                                // Reconnect during/after streaming — use fast retry.
                                 try { Thread.sleep(300) } catch (_: InterruptedException) {}
                             }
                         }
                     }
                     if (socket == null) break
 
-                    connectAttempt = 0  // reset: successful connection
+                    connectAttempt = 0
                     activeSocket = socket
-                    streamW = 0; streamH = 0  // reset dims for fresh connection
-                    Log.i(TAG, "TCP connected to $HOST:$port")
-                    Log.i(TAG, "[DBG#16] onSenderIp INVOKING — will create TcpTouchSender")
-                    onSenderIp?.invoke(HOST)
-                    Log.i(TAG, "[DBG#16] onSenderIp RETURNED")
+                    streamW = 0; streamH = 0
 
-                    // Send mode selection as first message so Windows reads it before streaming.
-                    if (modeToSend != null) {
+                    Log.i(TAG, "TCP connected to $HOST:$port")
+
+                    // Determine which mode to send.
+                    //
+                    // Priority order:
+                    //   1. modeToSend != null  → caller already knows the mode (legacy / reconnect
+                    //      with known mode passed at construction); send immediately.
+                    //   2. committedMode != null → same TcpStreamReceiver object reconnecting after
+                    //      the mode was already sent once; reuse it without re-showing the dialog.
+                    //   3. onWindowsReady path  → first connect with no predetermined mode:
+                    //      notify MainActivity so it shows the dialog, then wait for the user to tap
+                    //      (via setPendingMode).  Windows's AcceptLoop gives us 5 s before timeout,
+                    //      but the dialog appears immediately on TCP connect so the user taps within
+                    //      1–2 s.  If the connection times out before the tap, the outer loop
+                    //      reconnects; pendingMode persists so the next connection sends immediately.
+                    val modeActual: String? = when {
+                        modeToSend != null -> modeToSend
+
+                        committedMode != null -> {
+                            Log.i(TAG, "[MODE] reconnect — reusing committedMode='$committedMode'")
+                            committedMode
+                        }
+
+                        else -> {
+                            if (pendingMode == null) {
+                                // First time: ask MainActivity to show the dialog.
+                                Log.i(TAG, "[MODE] TCP connected — firing onWindowsReady for mode dialog")
+                                onWindowsReady?.invoke()
+                                onStatus("Select display mode…")
+                            } else {
+                                // Reconnect while dialog was pending (e.g. 5 s Windows timeout
+                                // fired before user tapped); pendingMode already set, skip dialog.
+                                Log.i(TAG, "[MODE] TCP reconnected — pendingMode already set, sending immediately")
+                            }
+                            // Wait up to 120 s for user tap (matches Windows WaitForMode timeout).
+                            val deadline = System.currentTimeMillis() + 120_000L
+                            while (pendingMode == null && isRunning &&
+                                   System.currentTimeMillis() < deadline) {
+                                try { Thread.sleep(100) } catch (_: InterruptedException) {}
+                            }
+                            pendingMode  // null on timeout or stop
+                        }
+                    }
+
+                    if (modeActual != null) {
                         val dimSuffix = if (screenW > 0 && screenH > 0) ":$screenW:$screenH" else ""
-                        val modeLine = "POCKETDISPLAY_MODE:$modeToSend$dimSuffix\n"
+                        val modeLine = "POCKETDISPLAY_MODE:$modeActual$dimSuffix\n"
                         Log.i(TAG, "[MODE] USB TCP: sending '$modeLine' (${modeLine.toByteArray(Charsets.US_ASCII).size} bytes)")
                         socket.getOutputStream().write(modeLine.toByteArray(Charsets.US_ASCII))
                         socket.getOutputStream().flush()
+                        // Remember for reconnects; keep pendingMode non-null too so that if the
+                        // write succeeded but the socket drops before Windows reads it, the next
+                        // reconnect can resend without re-showing the dialog.
+                        committedMode = modeActual
                         modeEverSent = true
                         Log.i(TAG, "[MODE] USB TCP: mode sent OK")
                     }
+
+                    // Notify touch-sender setup now that mode is settled.
+                    Log.i(TAG, "[DBG#16] onSenderIp INVOKING — will create TcpTouchSender")
+                    onSenderIp?.invoke(HOST)
+                    Log.i(TAG, "[DBG#16] onSenderIp RETURNED")
 
                     val input = DataInputStream(socket.getInputStream())
                     val lenBuf = ByteArray(4)
@@ -150,12 +209,10 @@ class TcpStreamReceiver(
                 } finally {
                     activeSocket = null
                     try { socket?.close() } catch (_: Exception) {}
-                    // Release decoder so it re-configures cleanly on next connect.
                     decoder.release()
                 }
-                // Brief pause before reconnect attempt.
                 if (isRunning) {
-                    onStatus("USB: reconnecting\u2026")
+                    onStatus("USB: reconnecting…")
                     try { Thread.sleep(500) } catch (_: InterruptedException) {}
                 }
             }
