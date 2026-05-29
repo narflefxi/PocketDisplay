@@ -285,6 +285,12 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
 
     private fun startReceiver() {
         binding.textureView.animate().cancel()
+        // DXGI desktop capture is always upside-down; pre-apply the 180° rotation so the
+        // TextureView is already correctly oriented when the loading cover is removed.
+        // Without this, the view stays at rotation=0 (reset in stopReceiver) until
+        // INFO_OUTPUT_FORMAT_CHANGED fires from the decoder — which can lag 2–3 s on some
+        // devices — causing a visible upside-down flash on every reconnect.
+        binding.textureView.rotation = 180f
         binding.textureView.alpha = 0f
         videoShowPending = true
         val st = binding.textureView.surfaceTexture ?: return
@@ -372,6 +378,11 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         setStatusDot(connected = false)
         updateStatus("Disconnected")
         firstFrameReceived = false
+        // Restart WiFi discovery so the mode dialog appears fresh on the next connection.
+        // Without this, DiscoveryClient fires onHostFound exactly once then stops; if the
+        // user disconnects manually and Windows is still broadcasting, nobody is listening
+        // and the dialog never appears again until onResume().
+        if (!usbMode) startDiscovery()
     }
 
     // ── Callbacks ────────────────────────────────────────────────────────────
