@@ -77,7 +77,13 @@ class TcpStreamReceiver(
                 // send, sessionStarted=true and committedMode is reused on reconnect.
                 if (!sessionStarted) {
                     committedMode = null
-                    pendingMode = null
+                    // pendingMode is intentionally NOT cleared here.  If the user
+                    // already tapped the mode dialog before the connection dropped
+                    // (e.g. Windows' 5 s RCVTIMEO fired), their choice is preserved
+                    // so the next connect attempt sends HELLO immediately without
+                    // re-showing the dialog.  pendingMode is null by default in a
+                    // freshly constructed TcpStreamReceiver, so new sessions always
+                    // start clean regardless of this path.
                 }
 
                 var socket: Socket? = null

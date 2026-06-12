@@ -19,10 +19,14 @@ class VideoDecoder(
     private var lastSpsData: ByteArray? = null
 
     fun configure(spsData: ByteArray, hintW: Int = 0, hintH: Int = 0) {
-        // Deduplication: same SPS + decoder already running → re-send ACK only
-        // (Windows resend_thread keeps re-sending until it receives the ACK).
+        // Deduplication: same SPS + decoder already running → no action needed.
+        // resend_thread sends codec_config every 2 s unconditionally; calling
+        // onConfigured here on every duplicate would fire onCodecConfigured()
+        // which (a) for WiFi after firstFrameReceived=true calls stopReceiver()
+        // and breaks streaming, and (b) for USB resets firstFrameReceived=false
+        // causing continuous spurious ACKs.  android_ready is already true at
+        // this point, so silently ignoring the duplicate is safe.
         if (lastSpsData != null && spsData.contentEquals(lastSpsData!!)) {
-            if (running) onConfigured?.invoke()
             return
         }
 
