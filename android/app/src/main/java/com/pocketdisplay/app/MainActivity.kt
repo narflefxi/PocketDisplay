@@ -812,29 +812,37 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
             .show()
     }
 
-    /** Sends mode choice to Windows via UDP (WiFi only). USB sends mode over the video TCP socket. */
+    /** Sends mode choice to Windows via short-lived TCP HELLO to hostIp:7777 (WiFi only).
+     *  USB sends HELLO over the persistent video TCP socket in TcpStreamReceiver. */
     private fun sendModeSelection(hostIp: String, mode: String) {
-        Log.i(TAG, "[MODE] sendModeSelection: mode='$mode' -> $hostIp:${DiscoveryClient.DISCOVERY_PORT}")
-        val dc = discoverClient
-        if (dc != null) {
-            dc.sendMode(hostIp, mode)
-        } else {
-            // discoverClient may have been nulled (e.g. by stopReceiver during USB probe race).
-            // Fall back to a direct UDP send so the mode always reaches Windows.
-            Log.w(TAG, "[MODE] discoverClient is null — sending mode directly via UDP")
-            Thread {
-                try {
-                    java.net.DatagramSocket().use { s ->
-                        val bytes = "POCKETDISPLAY_MODE:$mode".toByteArray(Charsets.US_ASCII)
-                        s.send(java.net.DatagramPacket(bytes, bytes.size,
-                            java.net.InetAddress.getByName(hostIp), DiscoveryClient.DISCOVERY_PORT))
-                        Log.i(TAG, "[MODE] direct UDP fallback sent OK: '$mode' -> $hostIp")
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "[MODE] direct UDP fallback failed: ${e.message}")
+        Log.i(TAG, "[MODE] sendModeSelection: mode='$mode' -> $hostIp:7777 (TCP HELLO)")
+        @Suppress("DEPRECATION")
+        val dm = android.util.DisplayMetrics().also { windowManager.defaultDisplay.getRealMetrics(it) }
+        val screenW = dm.widthPixels
+        val screenH = dm.heightPixels
+        Thread {
+            try {
+                java.net.Socket().use { s ->
+                    s.tcpNoDelay = true
+                    s.connect(java.net.InetSocketAddress(hostIp, 7777), 2000)
+                    val modeVal  = if (mode == "extend") 1.toByte() else 0.toByte()
+                    val helloLen = 11  // type(1)+version(1)+mode(1)+w(4)+h(4)
+                    val frame    = java.nio.ByteBuffer.allocate(4 + helloLen)
+                        .order(java.nio.ByteOrder.BIG_ENDIAN)
+                    frame.putInt(helloLen)
+                    frame.put(4.toByte())    // type = kHello
+                    frame.put(1.toByte())    // protocol_version = 1
+                    frame.put(modeVal)
+                    frame.putInt(screenW)
+                    frame.putInt(screenH)
+                    s.getOutputStream().write(frame.array())
+                    s.getOutputStream().flush()
+                    Log.i(TAG, "[MODE] WiFi TCP HELLO sent OK: mode=$mode screen=${screenW}x${screenH}")
                 }
-            }.also { it.isDaemon = true; it.start() }
-        }
+            } catch (e: Exception) {
+                Log.e(TAG, "[MODE] WiFi TCP HELLO failed: ${e.message}")
+            }
+        }.also { it.isDaemon = true; it.start() }
         modeSelected = true
         autoStartIfNeeded()
     }

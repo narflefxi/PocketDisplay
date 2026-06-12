@@ -195,8 +195,13 @@ static std::string GetSubnetBroadcast(const std::string& local_ip) {
                                        : "255.255.255.255";
 }
 
-struct DiscResult { std::string android_ip; bool extend = false; };
+// Discovery result: Android IP only. Mode is now delivered via TCP HELLO on the video port.
+struct DiscResult { std::string android_ip; };
 
+// UDP discovery: broadcasts POCKETDISPLAY_HOST until Android replies with
+// POCKETDISPLAY_CLIENT. Returns immediately after the CLIENT reply — mode is
+// delivered separately via TCP HELLO (Phase 1 refactor). UDP :7779 is now
+// announcement-only; POCKETDISPLAY_MODE packets are ignored.
 static DiscResult RunDiscovery(const std::string& local_ip, uint16_t video_port) {
     DiscResult result;
     SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -252,15 +257,12 @@ static DiscResult RunDiscovery(const std::string& local_ip, uint16_t video_port)
     ResetColor();
 
     auto last_bcast = std::chrono::steady_clock::now() - std::chrono::seconds(3);
-    bool phase2 = false;
-    std::chrono::steady_clock::time_point phase2_start;
 
     while (g_running) {
         const auto now = std::chrono::steady_clock::now();
         if (std::chrono::duration_cast<std::chrono::seconds>(now - last_bcast).count() >= 2) {
             do_bcast(); last_bcast = now;
         }
-        if (phase2 && (now - phase2_start) > std::chrono::seconds(30)) break;
 
         char buf[256]{};
         sockaddr_in from{}; int flen = sizeof(from);
@@ -271,29 +273,16 @@ static DiscResult RunDiscovery(const std::string& local_ip, uint16_t video_port)
         std::string msg(buf, n);
         while (!msg.empty() && (msg.back() == '\r' || msg.back() == '\n')) msg.pop_back();
 
-        if (!phase2 && msg.rfind("POCKETDISPLAY_CLIENT:", 0) == 0) {
+        if (msg.rfind("POCKETDISPLAY_CLIENT:", 0) == 0) {
             result.android_ip = msg.substr(21);
-            phase2 = true; phase2_start = now;
             SetColor(GREEN);
-            std::cout << "  Android connected: " << result.android_ip << "\n";
+            std::cout << "  Android found: " << result.android_ip
+                      << "  \u2014 waiting for mode selection via TCP HELLO...\n";
             ResetColor();
-            SetColor(CYAN);
-            std::cout << "  Waiting for display mode selection on Android (30 s → Mirror)...\n";
-            ResetColor();
-        } else if (msg.rfind("POCKETDISPLAY_MODE:", 0) == 0) {
-            const std::string mode_str = msg.substr(19);
-            SetColor(GREEN);
-            std::cout << "  [WiFi] MODE received: \"" << mode_str << "\"  -> "
-                      << (mode_str == "extend" ? "Extended" : "Mirror") << "\n";
-            ResetColor();
-            result.extend = (mode_str == "extend");
-            if (result.android_ip.empty()) {
-                char ip_buf[INET_ADDRSTRLEN] = {};
-                if (inet_ntop(AF_INET, &from.sin_addr, ip_buf, sizeof(ip_buf)))
-                    result.android_ip = ip_buf;
-            }
-            break;
+            break;  // Mode arrives via TCP HELLO on port video_port.
         }
+        // POCKETDISPLAY_MODE packets from old clients are intentionally ignored here.
+        // Mode is delivered via the TCP HELLO handshake (Phase 1 refactor).
     }
 
     closesocket(sock);
@@ -515,7 +504,21 @@ int main(int argc, char* argv[]) {
 
     std::signal(SIGINT, SignalHandler);
 
+    // WiFi auto-discover: TCP server for HELLO handshake. Stays alive for reconnects.
+    // Declared here (outside the if block) so its lifetime covers the whole session.
+    std::unique_ptr<TcpVideoServer> wifi_hello_server;
+
     if (auto_discover) {
+        // Start the TCP HELLO server BEFORE broadcasting so it is ready when Android
+        // receives the first announcement and opens a connection.
+        wifi_hello_server = std::make_unique<TcpVideoServer>();
+        if (!wifi_hello_server->StartListen(port)) {
+            SetColor(RED);
+            std::cerr << "  ERROR: WiFi TCP HELLO server listen failed on port " << port << ".\n";
+            ResetColor();
+            return 1;
+        }
+
         const auto disc = RunDiscovery(GetLocalIp(), port);
         if (!g_running) return 0;
         if (disc.android_ip.empty()) {
@@ -525,8 +528,16 @@ int main(int argc, char* argv[]) {
             ResetColor();
             return 1;
         }
-        target_ip   = disc.android_ip;
-        extend_mode = disc.extend;
+        target_ip = disc.android_ip;
+
+        SetColor(CYAN);
+        std::cout << "  Waiting for mode selection on Android (120 s \u2192 Mirror)...\n";
+        ResetColor();
+        wifi_hello_server->WaitForMode(120000, extend_mode);
+        if (!g_running) return 0;
+        SetColor(GREEN);
+        std::cout << "  [WiFi] Mode: " << (extend_mode ? "Extended" : "Mirror") << "\n";
+        ResetColor();
     }
 
     std::unique_ptr<TcpVideoServerWrap> usb_server;

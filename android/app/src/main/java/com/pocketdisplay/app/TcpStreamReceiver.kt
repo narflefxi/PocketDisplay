@@ -152,10 +152,18 @@ class TcpStreamReceiver(
                     }
 
                     if (modeActual != null) {
-                        val dimSuffix = if (screenW > 0 && screenH > 0) ":$screenW:$screenH" else ""
-                        val modeLine = "POCKETDISPLAY_MODE:$modeActual$dimSuffix\n"
-                        Log.i(TAG, "[MODE] USB TCP: sending '$modeLine' (${modeLine.toByteArray(Charsets.US_ASCII).size} bytes)")
-                        socket.getOutputStream().write(modeLine.toByteArray(Charsets.US_ASCII))
+                        // Send framed HELLO: [4-byte BE len=11][type=4][version=1][mode][w32BE][h32BE]
+                        val modeVal  = if (modeActual == "extend") 1.toByte() else 0.toByte()
+                        val helloLen = 11  // type(1)+version(1)+mode(1)+w(4)+h(4)
+                        val frame    = ByteBuffer.allocate(4 + helloLen).order(ByteOrder.BIG_ENDIAN)
+                        frame.putInt(helloLen)   // length prefix
+                        frame.put(4.toByte())    // type = kHello
+                        frame.put(1.toByte())    // protocol_version = 1
+                        frame.put(modeVal)       // mode: 0=mirror, 1=extend
+                        frame.putInt(screenW)    // android_screen_w
+                        frame.putInt(screenH)    // android_screen_h
+                        Log.i(TAG, "[MODE] USB TCP HELLO: sending mode=$modeActual screen=${screenW}x${screenH}")
+                        socket.getOutputStream().write(frame.array())
                         socket.getOutputStream().flush()
                         // Remember for reconnects; keep pendingMode non-null too so that if the
                         // write succeeded but the socket drops before Windows reads it, the next
@@ -163,7 +171,7 @@ class TcpStreamReceiver(
                         committedMode = modeActual
                         sessionStarted = true
                         modeEverSent = true
-                        Log.i(TAG, "[MODE] USB TCP: mode sent OK")
+                        Log.i(TAG, "[MODE] USB TCP HELLO: sent OK")
                     }
 
                     // Notify touch-sender setup now that mode is settled.

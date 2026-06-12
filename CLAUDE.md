@@ -9,7 +9,7 @@ Windows-to-Android screen sharing app (like Super Display).
 ## Tech Stack
 - Windows: C++, DXGI, x264, Win32, CMake
 - Android: Kotlin, MediaCodec, Material Design 3
-- Ports: 7777 (video), 7778 (touch/ACK)
+- Ports: 7777 (video/HELLO), 7778 (touch/ACK), 7779 (UDP discovery — announcement only)
 
 ## Build Commands
 Windows:
@@ -81,9 +81,22 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 - #9: One-click launch from GUI ✅
 - #7: Video blurry/ghosting ✅
 
+## HELLO Handshake (Phase 1 — unified in-band mode selection)
+Both USB and WiFi now use the same binary HELLO message to deliver mode.
+Frame: [4-byte BE length = 11][type=4][version=1][mode 0/1][w uint32BE][h uint32BE]
+- type 4 = kHello, version 1, mode 0=mirror / 1=extend
+- w/h = Android screen dimensions
+USB: TcpStreamReceiver sends HELLO as the first framed message on the streaming TCP socket.
+WiFi: Android opens a short-lived TCP connection to Windows:7777, sends HELLO, closes.
+  Windows runs a TcpVideoServer on :7777 in both USB and WiFi modes to accept HELLO.
+Probe guard: connections that close without a valid HELLO are discarded silently.
+Unknown HELLO version: log + default Mirror (graceful reject).
+UDP port 7779 is now ANNOUNCEMENT-ONLY: POCKETDISPLAY_HOST + POCKETDISPLAY_CLIENT.
+  POCKETDISPLAY_MODE packets are no longer sent or handled.
+
 ## Connection Flow (USB)
 1. Windows starts → EarlyAdbReverse opens ports 7777/7778
-2. Android connects to 7777 → sends mode (mirror/extend)
+2. Android connects to 7777 → sends HELLO (type=4, mode, screen w/h) as first framed msg
 3. Windows WaitForMode() returns
 4. resend_thread immediately sends stream_info + codec_config (no gate)
 5. Android TcpTouchSender connects to 7778 (retries until Windows opens it)
@@ -91,6 +104,15 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 7. android_ready = true → video frames flow
    Note: TcpTouchSender connect thread is persistent — reconnects automatically
    if socket dies (e.g. Windows restart). rawSend nulls tcpSocket on failure.
+
+## Connection Flow (WiFi)
+1. Windows starts TcpVideoServer on :7777 (HELLO listener), then broadcasts POCKETDISPLAY_HOST
+2. Android DiscoveryClient receives broadcast, sends POCKETDISPLAY_CLIENT reply
+3. RunDiscovery returns with android_ip (no more mode wait in UDP path)
+4. Android showModeDialog; user taps Mirror/Extended
+5. Android opens short-lived TCP to hostIp:7777, sends HELLO, closes connection
+6. Windows WaitForMode() unblocks → extend_mode set → UDP streaming starts
+7. UDP video frames flow; touch/ACK over TCP :7778
 
 ## Important Rules
 - Never use system() or _popen() for adb — causes cmd popup
