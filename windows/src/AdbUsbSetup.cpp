@@ -105,20 +105,39 @@ static std::string Trim(std::string s) {
     return s;
 }
 
-bool DetectUsbDevice() {
-    const fs::path adb = FindAdbExe();
-    if (adb.empty()) return false;
+// Returns true if the serial looks like a wireless-adb entry (ip:port form).
+static bool IsWirelessSerial(const std::string& serial) {
+    return serial.find(':') != std::string::npos;
+}
+
+// Returns the first USB serial (non-ip:port) in "device" state, or empty string.
+static std::string GetUsbSerial(const fs::path& adb) {
     DWORD ec = 1;
     const std::string out = RunAdb(adb, L"devices", ec);
-    if (ec != 0) return false;
+    if (ec != 0) return {};
     std::istringstream iss(out);
     std::string line;
     bool header_done = false;
     while (std::getline(iss, line)) {
         if (!header_done) { header_done = true; continue; }
-        if (line.find("\tdevice") != std::string::npos) return true;
+        const auto tab = line.find('\t');
+        if (tab == std::string::npos) continue;
+        const std::string serial = line.substr(0, tab);
+        std::string state = line.substr(tab + 1);
+        while (!state.empty() &&
+               (state.back() == '\r' || state.back() == '\n' || state.back() == ' '))
+            state.pop_back();
+        if (state != "device") continue;
+        if (IsWirelessSerial(serial)) continue;  // skip wireless adb (192.168.x.x:5555)
+        return serial;
     }
-    return false;
+    return {};
+}
+
+bool DetectUsbDevice() {
+    const fs::path adb = FindAdbExe();
+    if (adb.empty()) return false;
+    return !GetUsbSerial(adb).empty();
 }
 
 std::string RunAdbUsbReverse(uint16_t video_port, uint16_t touch_port) {
@@ -132,24 +151,23 @@ std::string RunAdbUsbReverse(uint16_t video_port, uint16_t touch_port) {
     std::cout << "  [ADB] devices:\n" << devices_out;
     if (ec != 0) return "adb devices failed: " + Trim(devices_out);
 
-    int device_lines = 0;
-    {
-        std::istringstream iss(devices_out);
-        std::string line;
-        while (std::getline(iss, line)) {
-            const auto tab = line.find('\t');
-            if (tab == std::string::npos) continue;
-            std::string state = line.substr(tab + 1);
-            while (!state.empty() && (state.back() == '\r' || state.back() == ' ')) state.pop_back();
-            if (state == "device") ++device_lines;
-        }
-    }
-    if (device_lines < 1) return "No Android device in \"device\" state. Enable USB debugging and run \"adb devices\".";
+    // Find the first USB serial (non ip:port) — skip wireless adb entries.
+    const std::string usb_serial = GetUsbSerial(adb);
+    if (usb_serial.empty())
+        return "No USB Android device in \"device\" state. Enable USB debugging and run \"adb devices\".";
+
+    std::cout << "  [ADB] USB serial: " << usb_serial << "\n";
+
+    // Use -s <serial> on every command to avoid \"more than one device\" errors
+    // when wireless adb is also active.
+    const std::wstring serial_prefix =
+        L"-s " + std::wstring(usb_serial.begin(), usb_serial.end()) + L" ";
 
     auto run = [&](const std::wstring& args) -> std::string {
-        std::cout << "  [ADB] " << adb.string() << " " << Narrow(args) << "\n";
+        const std::wstring full = serial_prefix + args;
+        std::cout << "  [ADB] " << adb.string() << " " << Narrow(full) << "\n";
         DWORD code = 1;
-        const std::string out = RunAdb(adb, args, code);
+        const std::string out = RunAdb(adb, full, code);
         if (code != 0) return "exit code " + std::to_string(code) + (out.empty() ? "" : (": " + Trim(out)));
         return {};
     };
@@ -205,7 +223,12 @@ void ClearAdbReverse() {
     const fs::path adb = FindAdbExe();
     if (adb.empty()) return;
 
-    std::wstring cmd = Quote(adb) + L" reverse --remove-all";
+    // Use -s <serial> if a USB device is present to avoid multiple-device errors.
+    const std::string serial = GetUsbSerial(adb);
+    std::wstring cmd = Quote(adb);
+    if (!serial.empty())
+        cmd += L" -s " + std::wstring(serial.begin(), serial.end());
+    cmd += L" reverse --remove-all";
     STARTUPINFOW si = {};
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi = {};

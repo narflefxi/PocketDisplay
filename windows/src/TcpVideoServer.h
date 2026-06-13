@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <functional>
 #include <mutex>
+#include <string>
 #include <thread>
 
 // TCP server on PC. Used for USB streaming (Android→127.0.0.1 via adb reverse)
@@ -46,6 +47,15 @@ public:
     // Called each time Android (re)connects — use to reset android_ready.
     void SetReconnectCallback(std::function<void()> cb) { reconnect_cb_ = std::move(cb); }
 
+    // Session-based callback: fires when a valid HELLO is received.
+    // For USB (peer=="127.0.0.1"): streaming_sock is the accepted socket; caller takes ownership.
+    // For WiFi (peer!="127.0.0.1"): streaming_sock==INVALID_SOCKET; socket already closed.
+    // When this callback is set, the legacy client_sock_/reconnect_cb_ path is bypassed.
+    using HelloCallback = std::function<void(bool extend, int aW, int aH,
+                                              const std::string& peer_ip,
+                                              SOCKET streaming_sock)>;
+    void SetHelloCallback(HelloCallback cb) { hello_cb_ = std::move(cb); }
+
     // Android screen dimensions from mode handshake (0 if not sent).
     void GetAndroidSize(int& w, int& h) const { w = android_w_; h = android_h_; }
 
@@ -61,6 +71,7 @@ private:
     std::thread         accept_thread_;
     std::atomic<bool>   running_{false};
     std::function<void()> reconnect_cb_;
+    HelloCallback           hello_cb_;
 
     std::mutex              mode_mu_;
     std::condition_variable mode_cv_;

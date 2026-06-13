@@ -206,8 +206,21 @@ void TcpVideoServer::AcceptLoop() {
             std::cout << "  [USB/video] Android connected — mode="
                       << (val == 1 ? "Extended" : "Mirror")
                       << "  screen=" << aW << "x" << aH << "\n";
+
+            // ── Session-based path (hello_cb_ set) ──────────────────────────
+            // Fire the callback inside this scope while val/aW/aH are live.
+            if (hello_cb_) {
+                const bool is_usb = (strcmp(peer_ip, "127.0.0.1") == 0);
+                // For WiFi the HELLO connection is short-lived — close it here.
+                // For USB the caller takes ownership of the socket.
+                const SOCKET hand_sock = is_usb ? c : INVALID_SOCKET;
+                if (!is_usb) { closesocket(c); }
+                hello_cb_(val == 1, aW, aH, std::string(peer_ip), hand_sock);
+                continue;  // skip legacy client_sock_ / reconnect_cb_ management
+            }
         }
 
+        // ── Legacy path (hello_cb_ not set) ─────────────────────────────────
         {
             std::lock_guard<std::mutex> lock(client_mu_);
             if (client_sock_ != INVALID_SOCKET) {

@@ -1,4 +1,5 @@
 #pragma once
+#include <mutex>
 #include <winsock2.h>
 #include <windows.h>
 #include <cstdint>
@@ -44,6 +45,8 @@ private:
     std::string last_udp_sender_;
     std::function<void()> connect_cb_;
     SOCKET            sock_         = INVALID_SOCKET;
+    SOCKET            client_sock_  = INVALID_SOCKET;  // active TCP client (USB mode only)
+    std::mutex        client_mu_;                       // protects client_sock_
     std::thread       thread_;
     std::atomic<bool> running_{false};
     bool              tcp_mode_     = false;

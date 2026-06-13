@@ -3,6 +3,7 @@
 #include <ws2tcpip.h>
 #include <cstring>
 #include <iostream>
+#include <mutex>
 
 TouchReceiver::~TouchReceiver() { Stop(); }
 
@@ -35,6 +36,10 @@ bool TouchReceiver::Start(uint16_t port, bool tcp_mode) {
         // UDP — existing WiFi path
         sock_ = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
         if (sock_ == INVALID_SOCKET) return false;
+
+        int reuse = 1;
+        setsockopt(sock_, SOL_SOCKET, SO_REUSEADDR,
+                   reinterpret_cast<const char*>(&reuse), sizeof(reuse));
 
         sockaddr_in addr = {};
         addr.sin_family      = AF_INET;
@@ -134,8 +139,16 @@ void TouchReceiver::TcpAcceptLoop() {
                                &addr_len);
         if (client == INVALID_SOCKET) break;
         std::cout << "[touch/TCP] Android connected\n";
+        {
+            std::lock_guard<std::mutex> lk(client_mu_);
+            client_sock_ = client;
+        }
         if (connect_cb_) connect_cb_();
         TcpClientLoop(client);
+        {
+            std::lock_guard<std::mutex> lk(client_mu_);
+            if (client_sock_ == client) client_sock_ = INVALID_SOCKET;
+        }
         closesocket(client);
         std::cout << "[touch/TCP] Android disconnected\n";
     }
@@ -249,6 +262,14 @@ void TouchReceiver::InjectVirtualKey(uint16_t vk, bool key_down) const {
 
 void TouchReceiver::Stop() {
     running_ = false;
+    // Close the active TCP client socket first so TcpClientLoop unblocks immediately.
+    {
+        std::lock_guard<std::mutex> lk(client_mu_);
+        if (client_sock_ != INVALID_SOCKET) {
+            closesocket(client_sock_);
+            client_sock_ = INVALID_SOCKET;
+        }
+    }
     if (sock_ != INVALID_SOCKET) {
         closesocket(sock_);
         sock_ = INVALID_SOCKET;

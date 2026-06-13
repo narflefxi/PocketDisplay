@@ -18,6 +18,7 @@ endif()
 
 add_executable(PocketDisplay
     src/main.cpp
+    src/Session.cpp
     src/GuiApp.cpp
     src/ScreenCapture.cpp
     src/Encoder.cpp

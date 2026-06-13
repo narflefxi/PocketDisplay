@@ -22,10 +22,12 @@ $env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
 adb install -r app\build\outputs\apk\debug\app-debug.apk
 
 ## Key Files
-- windows/src/main.cpp — main streaming loop, one-click mode
+- windows/src/main.cpp — session manager, discovery broadcaster, HELLO server, one-click mode
+- windows/src/Session.h/.cpp — owns one streaming session (capture→encode→send); torn down on disconnect
 - windows/src/GuiApp.cpp — Win32 GUI dashboard
-- windows/src/TcpVideoServer.cpp — USB video server
+- windows/src/TcpVideoServer.cpp — always-on HELLO listener; fires SetHelloCallback on valid HELLO
 - windows/src/TouchReceiver.cpp — touch/ACK receiver
+- windows/src/AdbUsbSetup.cpp — adb setup; GetUsbSerial() skips wireless serials (ip:port)
 - android/.../TcpStreamReceiver.kt — USB video client
 - android/.../TcpTouchSender.kt — touch/ACK sender (USB)
 - android/.../MainActivity.kt — main UI & connection logic
@@ -42,7 +44,9 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 - Mirror & Extended mode: working
 - Touch/keyboard input: working
 - One-click GUI launch: working
-- Auto-reconnect: working
+- Auto-reconnect: working (session-based; no process restart required)
+- Mode switching without restart: working (new HELLO tears down old Session, starts new one)
+- Wireless adb + USB adb coexist: working (adb reverse uses -s <serial> to avoid multi-device error)
 
 ## Known Issues (Open)
 - #20: First-time setup requires too many manual steps (bug)
@@ -97,25 +101,46 @@ Unknown HELLO version: log + default Mirror (graceful reject).
 UDP port 7779 is now ANNOUNCEMENT-ONLY: POCKETDISPLAY_HOST + POCKETDISPLAY_CLIENT.
   POCKETDISPLAY_MODE packets are no longer sent or handled.
 
-## Connection Flow (USB)
-1. Windows starts → EarlyAdbReverse opens ports 7777/7778
-2. Android connects to 7777 → sends HELLO (type=4, mode, screen w/h) as first framed msg
-3. Windows WaitForMode() returns
-4. resend_thread immediately sends stream_info + codec_config (no gate)
-5. Android TcpTouchSender connects to 7778 (retries until Windows opens it)
-6. Android configures decoder → sends ACK (retries every 1s until first frame)
-7. android_ready = true → video frames flow
-   Note: TcpTouchSender connect thread is persistent — reconnects automatically
-   if socket dies (e.g. Windows restart). rawSend nulls tcpSocket on failure.
+## Phase 2 — Session-based server (refactor/unified-connection)
+Replaced the linear main.cpp streaming script with a persistent server.
+- TcpVideoServer::SetHelloCallback() fires on the AcceptLoop thread for every valid HELLO.
+  USB: hands off the accepted SOCKET to DirectSocketStreamer (caller owns it).
+  WiFi: closes the short-lived connection; UDP target = peer_ip from HELLO.
+- Session class owns ScreenCapture + encoder + TouchReceiver + stream/resend/cursor threads.
+  Start() → initialises all; Stop() → signals running_=false, closes streamer socket (unblocks
+  send()), joins all threads, releases capture.
+- On new HELLO: old Session::Stop() called, new Session created.
+- On disconnect: Session::StreamLoop detects SendFrame failure → running_=false;
+  main loop detects !IsRunning() → Stop() + reset → waits for next HELLO.
+- Discovery broadcaster runs continuously on a background thread; pauses while a
+  Session is active (prevents spurious WiFi reconnects during USB session).
+- WaitForMode() and one-shot RunDiscovery blocking calls removed from main().
 
-## Connection Flow (WiFi)
-1. Windows starts TcpVideoServer on :7777 (HELLO listener), then broadcasts POCKETDISPLAY_HOST
-2. Android DiscoveryClient receives broadcast, sends POCKETDISPLAY_CLIENT reply
-3. RunDiscovery returns with android_ip (no more mode wait in UDP path)
-4. Android showModeDialog; user taps Mirror/Extended
-5. Android opens short-lived TCP to hostIp:7777, sends HELLO, closes connection
-6. Windows WaitForMode() unblocks → extend_mode set → UDP streaming starts
-7. UDP video frames flow; touch/ACK over TCP :7778
+## ADB Multi-device Fix
+- DetectUsbDevice() / GetUsbSerial() now skip entries whose serial contains ':'
+  (wireless-adb format e.g. 192.168.1.5:5555).
+- RunAdbUsbReverse() and ClearAdbReverse() pass -s <usb_serial> on every adb
+  call, preventing "error: more than one device/emulator" when wireless adb is
+  also active alongside a USB device.
+
+## Connection Flow (USB — Phase 2)
+1. Windows starts → DetectUsbDevice() → RunAdbUsbReverse(-s <serial>); StartUsbMonitorThread
+2. TcpVideoServer always-on HELLO listener on :7777
+3. Android connects → sends HELLO; AcceptLoop fires hello_cb_ (hands off SOCKET)
+4. Session::Start() → ScreenCapture + encoder init; touch receiver on :7778 (TCP)
+5. ResendLoop sends stream_info + codec_config every 2s
+6. Android TcpTouchSender connects → ACK received → android_ready=true → frames flow
+7. On disconnect: StreamLoop fails → running_=false → main tears down session; loops back to 2
+
+## Connection Flow (WiFi — Phase 2)
+1. Windows starts → discovery broadcaster on UDP :7779 (continuous background thread)
+2. TcpVideoServer always-on HELLO listener on :7777
+3. Android receives POCKETDISPLAY_HOST → user taps mode dialog
+4. Android opens short-lived TCP to :7777 → sends HELLO → closes
+5. AcceptLoop fires hello_cb_ (peer IP ≠ 127.0.0.1 → WiFi path; SOCKET=INVALID)
+6. Session::Start() → capture + encoder + UdpStreamer to peer_ip; touch receiver on :7778 (UDP)
+7. ACK received → android_ready=true → frames flow
+8. On disconnect/silence: main detects !IsRunning() → Stop(); discovery resumes
 
 ## Important Rules
 - Never use system() or _popen() for adb — causes cmd popup
