@@ -48,6 +48,7 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 - Auto-reconnect: working (session-based; no process restart required)
 - Mode switching without restart: working (new HELLO tears down old Session, starts new one)
 - Wireless adb + USB adb coexist: working (adb reverse uses -s <serial> to avoid multi-device error)
+- WiFi→USB hot-switch: working (Phase 4b — always-on USB monitor + Android probe retry)
 
 ## Known Issues (Open)
 - #20: First-time setup requires too many manual steps (bug)
@@ -57,6 +58,12 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 - #1: Cursor position mismatch on Android (touch vs mouse) (bug)
 
 ## Recently Fixed
+- Phase 4b: WiFi→USB hot-switch + Connection Mode label ✅
+  - Root cause: StartUsbMonitorThread was only started when USB was present at app launch. Starting in WiFi mode meant no USB monitor ran, so adb reverse was never set up when a cable was plugged mid-session. Android probed 127.0.0.1:7777 once, failed silently, gave up.
+  - Windows fix: StartUsbMonitorThread now called unconditionally after startup (main.cpp), regardless of whether USB was present at launch. Monitor detects absent→present USB transition and runs RunAdbUsbReverse(-s <serial> tcp:7777 + tcp:7778) without touching the active WiFi session.
+  - Android fix: onUsbConnected() now retries probeHost("127.0.0.1") every 1 s for up to 5 s (instead of one-shot), catching the window while Windows sets up adb reverse. Each attempt is logged. On success: stopCurrentSession() + startUsbSession() with saved mode (no dialog).
+  - Label fix: startWifiDiscovery() now fires onTransport("Wi-Fi") before the early-return guard, ensuring the Connection Mode label always updates to "Wi-Fi" even when discovery was already running.
+  - Changed files: windows/src/main.cpp, android/.../ConnectionManager.kt
 - #19: Auto-switch USB/WiFi — UsbManager detection on startup + BroadcastReceiver for plug/unplug ✅
   - Follow-up: Fixed black screen/reconnect loop on WiFi→USB switch — race condition where old WiFi StreamReceiver threads were still alive when TcpStreamReceiver started. Fix: explicit stopReceiver() + 600ms postDelayed before setMode(true)+autoStartIfNeeded(). Also added reverse USB→WiFi auto-detection (probe failure → same stop+delay+setMode pattern). ✅
   - Bug 1: Fixed adb reverse lost after USB reconnect — added StartUsbMonitorThread() in AdbUsbSetup.cpp that polls DetectUsbDevice() every 3s and re-runs RunAdbUsbReverse() on device absent→present transition. Started in main.cpp after initial adb reverse. ✅

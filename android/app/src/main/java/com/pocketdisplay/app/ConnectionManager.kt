@@ -182,11 +182,24 @@ class ConnectionManager(private val context: Context) {
     }
 
     private fun onUsbConnected() {
-        Log.i(TAG, "[CM] USB attached — probing…")
+        Log.i(TAG, "[CM] USB attached — probing (will retry up to 5 s)…")
         Thread {
-            val usbOk = probeHost("127.0.0.1")
+            var usbOk = false
+            val deadline = System.currentTimeMillis() + 5_000L
+            var attempt = 0
+            while (!usbOk && System.currentTimeMillis() < deadline) {
+                attempt++
+                usbOk = probeHost("127.0.0.1")
+                Log.i(TAG, "[CM] USB probe attempt $attempt: ${if (usbOk) "reachable" else "not reachable"}")
+                if (!usbOk && System.currentTimeMillis() < deadline) {
+                    try { Thread.sleep(1_000) } catch (_: InterruptedException) { break }
+                }
+            }
             mainHandler.post {
-                if (!usbOk || surface == null) return@post
+                if (!usbOk || surface == null) {
+                    if (!usbOk) Log.i(TAG, "[CM] USB probe failed after $attempt attempt(s) — staying on current transport")
+                    return@post
+                }
                 if (currentTransport != Transport.USB) {
                     Log.i(TAG, "[CM] USB reachable after attach — switching to USB")
                     stopCurrentSession()
@@ -238,9 +251,9 @@ class ConnectionManager(private val context: Context) {
     }
 
     private fun startWifiDiscovery() {
+        onTransport?.invoke("Wi-Fi")  // Always update label, even if discovery is already running
         if (discoverClient?.isRunning == true) return
         Log.i(TAG, "[CM] Starting WiFi discovery")
-        onTransport?.invoke("Wi-Fi")
         onStatus?.invoke("Searching for PocketDisplay host…")
 
         discoverClient?.stop()
