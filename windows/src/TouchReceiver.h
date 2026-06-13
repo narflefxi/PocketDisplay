@@ -1,4 +1,5 @@
 #pragma once
+#include <mutex>
 #include <winsock2.h>
 #include <windows.h>
 #include <cstdint>
@@ -8,16 +9,16 @@
 #include <thread>
 
 // Receives touch and keyboard events from the Android app.
-// UDP mode (WiFi): Android sends datagrams to Windows:7778.
-// TCP mode (USB):  Android connects to Windows:7778 (via adb reverse tcp:7778 tcp:7778).
+// Phase 3: always TCP — Android connects to Windows:7778.
+// USB: via adb reverse tcp:7778 tcp:7778 (loopback).
+// WiFi: direct TCP to Windows IP:7778.
 class TouchReceiver {
 public:
     TouchReceiver() = default;
     ~TouchReceiver();
 
-    // tcp_mode=true: listen as TCP server (USB/ADB).
-    // tcp_mode=false: listen as UDP server (WiFi).
-    bool Start(uint16_t port = 7778, bool tcp_mode = false);
+    // Listen as TCP server on the given port.
+    bool Start(uint16_t port = 7778);
     void Stop();
 
     // Called when Android sends a codec-ready ACK (touch packet type 8).
@@ -32,7 +33,6 @@ public:
     void SetExtendedMonitor(RECT rect) { extended_mode_ = true; mon_rect_ = rect; }
 
 private:
-    void UdpLoop();
     void TcpAcceptLoop();
     void TcpClientLoop(SOCKET client);
     void ProcessPacket(const uint8_t* buf, int len);
@@ -41,12 +41,12 @@ private:
     void InjectVirtualKey(uint16_t vk, bool key_down) const;
 
     std::function<void(const std::string&)> ack_cb_;
-    std::string last_udp_sender_;
     std::function<void()> connect_cb_;
     SOCKET            sock_         = INVALID_SOCKET;
+    SOCKET            client_sock_  = INVALID_SOCKET;  // active TCP client
+    std::mutex        client_mu_;                       // protects client_sock_
     std::thread       thread_;
     std::atomic<bool> running_{false};
-    bool              tcp_mode_     = false;
     bool              extended_mode_= false;
     RECT              mon_rect_     = {};
 };

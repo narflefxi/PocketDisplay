@@ -4,6 +4,7 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <vector>
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -14,7 +15,13 @@ enum UsbTcpPayloadType : uint8_t {
     kCodec      = 1,
     kStreamInfo = 2,
     kCursor     = 3,
+    kHello      = 4,  // Android→Windows handshake (first framed msg after connect)
 };
+
+// HELLO payload (after the type byte): version(1) mode(1) w(4BE) h(4BE) = 10 bytes
+// Full frame: [len=11 4-byte BE][kHello][version=1][mode 0/1][w uint32BE][h uint32BE]
+static constexpr uint8_t  kHelloProtocolVersion = 1;
+static constexpr uint32_t kHelloPayloadSize     = 11;  // type(1)+version(1)+mode(1)+w(4)+h(4)
 
 } // namespace
 
@@ -96,81 +103,121 @@ void TcpVideoServer::AcceptLoop() {
         int buf_size = 4 * 1024 * 1024;
         setsockopt(c, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<const char*>(&buf_size), sizeof(buf_size));
 
-        // Read mode selection line before streaming begins.
+        // Read HELLO handshake: first framed message sent by Android after connecting.
+        // Frame format: [4-byte BE length L][L bytes payload]
+        // HELLO payload: [type=4][version=1][mode 0/1][w uint32BE][h uint32BE] = 11 bytes
+        // A connection that closes before sending a valid HELLO is a TCP probe — discard
+        // without touching client_sock_, mode_value_, or reconnect_cb_.
         {
             DWORD rcvto = 5000;
             setsockopt(c, SOL_SOCKET, SO_RCVTIMEO,
                        reinterpret_cast<char*>(&rcvto), sizeof(rcvto));
-            std::string line;
-            char ch;
-            int recv_result = 0;
-            while ((recv_result = recv(c, &ch, 1, 0)) == 1) {
-                if (ch == '\n') break;
-                if (ch != '\r') line += ch;
-                if (line.size() > 128) break;
+
+            // Read 4-byte length prefix.
+            uint8_t len_buf[4] = {};
+            int     total      = 0;
+            bool    ok         = true;
+            while (total < 4) {
+                const int n = recv(c, reinterpret_cast<char*>(len_buf + total), 4 - total, 0);
+                if (n <= 0) { ok = false; break; }
+                total += n;
             }
-            // Log recv exit reason to diagnose probe vs real connection.
-            if (recv_result == 0) {
-                std::cout << "  [USB/video] mode-read: peer closed (FIN) — line=\"" << line << "\"\n";
-            } else if (recv_result < 0) {
-                const int err = WSAGetLastError();
-                if (err == WSAETIMEDOUT)
-                    std::cout << "  [USB/video] mode-read: 5s SO_RCVTIMEO timeout — line=\"" << line << "\"\n";
-                else
-                    std::cout << "  [USB/video] mode-read: recv error " << err << " — line=\"" << line << "\"\n";
-            }
+
             DWORD zero = 0;
             setsockopt(c, SOL_SOCKET, SO_RCVTIMEO,
                        reinterpret_cast<char*>(&zero), sizeof(zero));
 
-            // Empty mode line = TCP probe from Android usbPollRunnable (port reachability check).
-            // Discard silently: do NOT replace client_sock_, do NOT call reconnect_cb_,
-            // do NOT update mode_value_.  Without this guard the probe was closing the real
-            // streaming socket every 3 s and waking WaitForMode() with a spurious Mirror value.
-            if (line.empty()) {
-                std::cout << "  [USB/video] empty mode line (TCP probe) — discarded, streaming unaffected\n";
-                std::cout << "  [SOCK] closing probe socket c=" << c << " — reason: empty mode line (probe discard)\n";
+            if (!ok) {
+                // Connection closed / timed-out before HELLO arrived → TCP probe, discard.
+                std::cout << "  [USB/video] no HELLO received (TCP probe?) — discarded, streaming unaffected\n";
+                std::cout << "  [SOCK] closing probe socket c=" << c << " — reason: no HELLO (probe discard)\n";
                 closesocket(c);
                 continue;
             }
 
-            std::cout << "  [USB/video] mode line received: \"" << line << "\"\n";
-            // Parse: POCKETDISPLAY_MODE:<mode>[:<width>:<height>]
-            int val = 0, aW = 0, aH = 0;
-            if (line.rfind("POCKETDISPLAY_MODE:", 0) == 0) {
-                const std::string rest = line.substr(19);
-                const size_t p1 = rest.find(':');
-                const std::string mstr = (p1 == std::string::npos) ? rest : rest.substr(0, p1);
-                val = (mstr == "extend") ? 1 : 0;
-                if (p1 != std::string::npos) {
-                    const size_t p2 = rest.find(':', p1 + 1);
-                    if (p2 != std::string::npos) {
-                        try { aW = std::stoi(rest.substr(p1 + 1, p2 - p1 - 1)); } catch (...) {}
-                        try { aH = std::stoi(rest.substr(p2 + 1)); } catch (...) {}
-                    }
-                }
-            } else {
-                // Unrecognised line (not a probe, not our protocol) — discard too.
-                std::cout << "  [USB/video] unrecognised mode line — discarded\n";
-                std::cout << "  [SOCK] closing unrecognised c=" << c << " — reason: unrecognised mode line\n";
+            const uint32_t msgLen = ntohl(*reinterpret_cast<uint32_t*>(len_buf));
+            if (msgLen < 3 || msgLen > 64) {
+                std::cout << "  [USB/video] invalid HELLO length " << msgLen << " — discarded\n";
+                std::cout << "  [SOCK] closing c=" << c << " — reason: invalid HELLO length\n";
                 closesocket(c);
                 continue;
             }
+
+            // Re-apply timeout for payload read.
+            setsockopt(c, SOL_SOCKET, SO_RCVTIMEO,
+                       reinterpret_cast<char*>(&rcvto), sizeof(rcvto));
+
+            std::vector<uint8_t> payload(msgLen);
+            total = 0; ok = true;
+            while (total < static_cast<int>(msgLen)) {
+                const int n = recv(c, reinterpret_cast<char*>(payload.data() + total),
+                                   static_cast<int>(msgLen) - total, 0);
+                if (n <= 0) { ok = false; break; }
+                total += n;
+            }
+
+            setsockopt(c, SOL_SOCKET, SO_RCVTIMEO,
+                       reinterpret_cast<char*>(&zero), sizeof(zero));
+
+            if (!ok) {
+                std::cout << "  [USB/video] HELLO payload read failed — discarded\n";
+                std::cout << "  [SOCK] closing c=" << c << " — reason: HELLO payload read failed\n";
+                closesocket(c);
+                continue;
+            }
+
+            const uint8_t type = payload[0];
+            if (type != kHello) {
+                std::cout << "  [USB/video] unexpected framed type=" << static_cast<int>(type)
+                          << " (expected HELLO=4) — discarded\n";
+                std::cout << "  [SOCK] closing c=" << c << " — reason: unexpected type (not HELLO)\n";
+                closesocket(c);
+                continue;
+            }
+
+            const uint8_t version = (msgLen >= 2) ? payload[1] : 0;
+            if (version != kHelloProtocolVersion) {
+                std::cout << "  [USB/video] unknown HELLO version=" << static_cast<int>(version)
+                          << " — defaulting to Mirror\n";
+            }
+
+            const uint8_t mode_byte = (msgLen >= 3) ? payload[2] : 0;
+            const int val = (mode_byte == 1) ? 1 : 0;
+
+            int aW = 0, aH = 0;
+            if (msgLen >= 11) {
+                uint32_t w_net = 0, h_net = 0;
+                std::memcpy(&w_net, payload.data() + 3, 4);
+                std::memcpy(&h_net, payload.data() + 7, 4);
+                aW = static_cast<int>(ntohl(w_net));
+                aH = static_cast<int>(ntohl(h_net));
+            }
+
             android_w_ = aW; android_h_ = aH;
             {
                 std::lock_guard<std::mutex> lk(mode_mu_);
                 mode_value_ = val;  // always update on each new connection
             }
             mode_cv_.notify_one();
-            std::cout << "  [TCP] valid mode received: "
-                      << (val == 1 ? "Extended" : "Mirror")
+            std::cout << "  [USB/video] HELLO v" << static_cast<int>(version)
+                      << " received: " << (val == 1 ? "Extended" : "Mirror")
                       << " screen=" << aW << "x" << aH
                       << " — keeping socket open, waiting for ACK\n";
             std::cout << "  [USB/video] Android connected — mode="
                       << (val == 1 ? "Extended" : "Mirror")
                       << "  screen=" << aW << "x" << aH << "\n";
+
+            // ── Session-based path (hello_cb_ set) ──────────────────────────
+            // Fire the callback inside this scope while val/aW/aH are live.
+            // Phase 3: both USB and WiFi stream over TCP — hand off the socket
+            // for both transports. Caller takes ownership via DirectSocketStreamer.
+            if (hello_cb_) {
+                hello_cb_(val == 1, aW, aH, std::string(peer_ip), c);
+                continue;  // skip legacy client_sock_ / reconnect_cb_ management
+            }
         }
 
+        // ── Legacy path (hello_cb_ not set) ─────────────────────────────────
         {
             std::lock_guard<std::mutex> lock(client_mu_);
             if (client_sock_ != INVALID_SOCKET) {

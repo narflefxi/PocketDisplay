@@ -1,15 +1,13 @@
-#include "ScreenCapture.h"
-#include "Encoder.h"
-#include "HwEncoder.h"
-#include "UdpStreamer.h"
+﻿#include "Session.h"
 #include "TcpVideoServer.h"
 #include "AdbUsbSetup.h"
-#include "TouchReceiver.h"
 #include "Protocol.h"
 #include "GuiApp.h"
 #include "VirtualDisplayDriver.h"
 
 #include <windows.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <iostream>
 #include <string>
 #include <sstream>
@@ -18,11 +16,10 @@
 #include <atomic>
 #include <csignal>
 #include <cstring>
-#include <cstdio>
-#include <future>
-#include <iomanip>
+#include <memory>
+#include <mutex>
 
-// ── Console color helpers ───────────────────────────────────────────────────
+// â”€â”€ Console color helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 static HANDLE g_con = INVALID_HANDLE_VALUE;
 enum Color : WORD { CYAN = 11, GREEN = 10, YELLOW = 14, RED = 12, WHITE = 15, GRAY = 8 };
@@ -54,7 +51,7 @@ static void PrintUsage(const char* exe) {
     ResetColor();
     std::cout << "\nOptions:\n"
               << "  --usb        USB mode: adb reverse + TCP video server (device connects to PC)\n"
-              << "  --hw         Hardware encoder (NVENC/Intel/AMD — falls back to x264)\n"
+              << "  --hw         Hardware encoder (NVENC/Intel/AMD â€” falls back to x264)\n"
               << "  --extend     Capture last DXGI output (virtual/extended display)\n"
               << "  --monitor=N  Capture monitor N (1-based index, e.g. --monitor=2)\n"
               << "\nExamples:\n"
@@ -64,7 +61,7 @@ static void PrintUsage(const char* exe) {
               << "  " << exe << " --usb --extend\n";
 }
 
-// ── Monitor selection ─────────────────────────────────────────────────────────
+// â”€â”€ Monitor selection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 struct MonitorSel { int adapter = 0; int output = 0; int number = 1; };
 
 static MonitorSel PickMonitor(bool extend, int monitor_num) {
@@ -163,12 +160,12 @@ static MonitorSel PickMonitor(bool extend, int monitor_num) {
     return {sel.ai, sel.oi, idx + 1};
 }
 
-// ── Signal ──────────────────────────────────────────────────────────────────
+// â”€â”€ Signal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 static std::atomic<bool> g_running{true};
 static void SignalHandler(int) { g_running = false; }
 
-// ── Auto-discovery helpers ───────────────────────────────────────────────────
+// â”€â”€ Auto-discovery helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 static constexpr uint16_t DISC_PORT = 7779;
 
@@ -195,180 +192,41 @@ static std::string GetSubnetBroadcast(const std::string& local_ip) {
                                        : "255.255.255.255";
 }
 
-struct DiscResult { std::string android_ip; bool extend = false; };
+// â”€â”€ Streamer implementations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-static DiscResult RunDiscovery(const std::string& local_ip, uint16_t video_port) {
-    DiscResult result;
-    SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (sock == INVALID_SOCKET) return result;
-
-    BOOL on = TRUE;
-    setsockopt(sock, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<char*>(&on), sizeof(on));
-    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,  reinterpret_cast<char*>(&on), sizeof(on));
-
-    sockaddr_in ba = {};
-    ba.sin_family = AF_INET; ba.sin_port = htons(DISC_PORT); ba.sin_addr.s_addr = INADDR_ANY;
-    if (bind(sock, reinterpret_cast<sockaddr*>(&ba), sizeof(ba)) != 0) {
-        closesocket(sock); return result;
+// Owns the TCP socket handed off from TcpVideoServer's AcceptLoop.
+// Used for both USB (peer=127.0.0.1) and WiFi (Phase 3: video is now always TCP).
+struct DirectSocketStreamer : IStreamer {
+    SOCKET     sock_ = INVALID_SOCKET;
+    std::mutex mu_;
+    explicit DirectSocketStreamer(SOCKET s) : sock_(s) {}
+    bool SendFrame(const uint8_t* data, size_t size, uint32_t, uint8_t flags) override {
+        using namespace pocketdisplay;
+        uint8_t type = 0;
+        if      (flags & FLAG_CODEC_CONFIG) type = 1;
+        else if (flags & FLAG_STREAM_INFO)  type = 2;
+        else if (flags & FLAG_CURSOR_POS)   type = 3;
+        const uint32_t be = htonl(static_cast<uint32_t>(1u + size));
+        std::lock_guard<std::mutex> lk(mu_);
+        if (sock_ == INVALID_SOCKET) return false;
+        auto sa = [&](const uint8_t* b, int n) -> bool {
+            for (int s = 0; s < n; ) {
+                int r = send(sock_, reinterpret_cast<const char*>(b+s), n-s, 0);
+                if (r <= 0) return false; s += r;
+            } return true;
+        };
+        return sa(reinterpret_cast<const uint8_t*>(&be), 4)
+            && sa(&type, 1)
+            && (size == 0 || sa(data, static_cast<int>(size)));
     }
-
-    DWORD tmout = 200;
-    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<char*>(&tmout), sizeof(tmout));
-
-    const std::string subnet_bcast = GetSubnetBroadcast(local_ip);
-    const bool dual = (subnet_bcast != "255.255.255.255");
-
-    static constexpr const char* MCAST_GROUP = "239.0.0.1";
-
-    sockaddr_in bc_all{}, bc_sub{}, bc_mcast{};
-    bc_all.sin_family   = AF_INET; bc_all.sin_port   = htons(DISC_PORT);
-    bc_all.sin_addr.s_addr = INADDR_BROADCAST;
-    bc_sub.sin_family   = AF_INET; bc_sub.sin_port   = htons(DISC_PORT);
-    inet_pton(AF_INET, subnet_bcast.c_str(), &bc_sub.sin_addr);
-    bc_mcast.sin_family = AF_INET; bc_mcast.sin_port = htons(DISC_PORT);
-    inet_pton(AF_INET, MCAST_GROUP, &bc_mcast.sin_addr);
-
-    DWORD mcast_ttl = 4;
-    setsockopt(sock, IPPROTO_IP, IP_MULTICAST_TTL,
-               reinterpret_cast<char*>(&mcast_ttl), sizeof(mcast_ttl));
-
-    const std::string ann =
-        std::string("POCKETDISPLAY_HOST:") + local_ip + ":" + std::to_string(video_port);
-    auto do_bcast = [&]() {
-        sendto(sock, ann.c_str(), static_cast<int>(ann.size()), 0,
-               reinterpret_cast<sockaddr*>(&bc_all), sizeof(bc_all));
-        if (dual) sendto(sock, ann.c_str(), static_cast<int>(ann.size()), 0,
-               reinterpret_cast<sockaddr*>(&bc_sub), sizeof(bc_sub));
-        sendto(sock, ann.c_str(), static_cast<int>(ann.size()), 0,
-               reinterpret_cast<sockaddr*>(&bc_mcast), sizeof(bc_mcast));
-    };
-
-    SetColor(CYAN);
-    std::cout << "  Broadcasting to 255.255.255.255:" << DISC_PORT;
-    if (dual) std::cout << " + " << subnet_bcast << ":" << DISC_PORT;
-    std::cout << " + " << MCAST_GROUP << ":" << DISC_PORT << " (multicast)";
-    std::cout << "\n  Local IP  : " << local_ip
-              << "  |  Open PocketDisplay on Android...\n";
-    ResetColor();
-
-    auto last_bcast = std::chrono::steady_clock::now() - std::chrono::seconds(3);
-    bool phase2 = false;
-    std::chrono::steady_clock::time_point phase2_start;
-
-    while (g_running) {
-        const auto now = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::seconds>(now - last_bcast).count() >= 2) {
-            do_bcast(); last_bcast = now;
-        }
-        if (phase2 && (now - phase2_start) > std::chrono::seconds(30)) break;
-
-        char buf[256]{};
-        sockaddr_in from{}; int flen = sizeof(from);
-        const int n = recvfrom(sock, buf, static_cast<int>(sizeof(buf)) - 1, 0,
-                               reinterpret_cast<sockaddr*>(&from), &flen);
-        if (n <= 0) continue;
-
-        std::string msg(buf, n);
-        while (!msg.empty() && (msg.back() == '\r' || msg.back() == '\n')) msg.pop_back();
-
-        if (!phase2 && msg.rfind("POCKETDISPLAY_CLIENT:", 0) == 0) {
-            result.android_ip = msg.substr(21);
-            phase2 = true; phase2_start = now;
-            SetColor(GREEN);
-            std::cout << "  Android connected: " << result.android_ip << "\n";
-            ResetColor();
-            SetColor(CYAN);
-            std::cout << "  Waiting for display mode selection on Android (30 s → Mirror)...\n";
-            ResetColor();
-        } else if (msg.rfind("POCKETDISPLAY_MODE:", 0) == 0) {
-            const std::string mode_str = msg.substr(19);
-            SetColor(GREEN);
-            std::cout << "  [WiFi] MODE received: \"" << mode_str << "\"  -> "
-                      << (mode_str == "extend" ? "Extended" : "Mirror") << "\n";
-            ResetColor();
-            result.extend = (mode_str == "extend");
-            if (result.android_ip.empty()) {
-                char ip_buf[INET_ADDRSTRLEN] = {};
-                if (inet_ntop(AF_INET, &from.sin_addr, ip_buf, sizeof(ip_buf)))
-                    result.android_ip = ip_buf;
-            }
-            break;
-        }
+    void Close() override {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (sock_ != INVALID_SOCKET) { closesocket(sock_); sock_ = INVALID_SOCKET; }
     }
-
-    closesocket(sock);
-    if (!g_running) return {};
-    return result;
-}
-
-// ── Live stats line ───────────────────────────────────────────────────────────
-
-static void PrintStats(double fps, double kbps, size_t frame_bytes,
-                        const char* enc_name, const char* mode_name) {
-    std::ostringstream oss;
-    oss << "\r  [" << mode_name << "/" << enc_name << "]  "
-        << "FPS: " << std::setw(3) << static_cast<int>(fps)
-        << "  Bitrate: " << std::setw(6) << static_cast<int>(kbps) << " kbps"
-        << "  Frame: " << std::setw(6) << frame_bytes << " B  ";
-    std::cout << oss.str() << std::flush;
-}
-
-// ── Encoder wrapper ──────────────────────────────────────────────────────────
-
-struct IEncoder {
-    virtual bool Initialize(int w, int h, int fps, int kbps) = 0;
-    virtual bool GetConfigPacket(std::vector<uint8_t>& out) = 0;
-    virtual bool EncodeFrame(const uint8_t* bgra,
-                              std::vector<uint8_t>& nal_out, bool& kf) = 0;
-    virtual void Close() = 0;
-    virtual ~IEncoder() = default;
+    ~DirectSocketStreamer() override { Close(); }
 };
 
-struct SwEncoderWrap : IEncoder {
-    Encoder enc;
-    bool Initialize(int w, int h, int fps, int kbps) override { return enc.Initialize(w,h,fps,kbps); }
-    bool GetConfigPacket(std::vector<uint8_t>& o) override    { return enc.GetConfigPacket(o); }
-    bool EncodeFrame(const uint8_t* b, std::vector<uint8_t>& o, bool& kf) override { return enc.EncodeFrame(b,o,kf); }
-    void Close() override { enc.Close(); }
-};
-
-struct HwEncoderWrap : IEncoder {
-    HwEncoder enc;
-    bool Initialize(int w, int h, int fps, int kbps) override { return enc.Initialize(w,h,fps,kbps); }
-    bool GetConfigPacket(std::vector<uint8_t>& o) override    { return enc.GetConfigPacket(o); }
-    bool EncodeFrame(const uint8_t* b, std::vector<uint8_t>& o, bool& kf) override { return enc.EncodeFrame(b,o,kf); }
-    void Close() override { enc.Close(); }
-};
-
-// ── Streamer wrapper ─────────────────────────────────────────────────────────
-
-struct IStreamer {
-    virtual bool Initialize(const std::string& ip, uint16_t port) = 0;
-    virtual bool SendFrame(const uint8_t* d, size_t sz,
-                            uint32_t id, uint8_t flags) = 0;
-    virtual void UpdateTarget(const std::string& /*ip*/) {}  // no-op for TCP
-    virtual void Close() = 0;
-    virtual ~IStreamer() = default;
-};
-
-struct UdpStreamerWrap : IStreamer {
-    UdpStreamer s;
-    bool Initialize(const std::string& ip, uint16_t port) override { return s.Initialize(ip,port); }
-    bool SendFrame(const uint8_t* d, size_t sz, uint32_t id, uint8_t f) override { return s.SendFrame(d,sz,id,f); }
-    void UpdateTarget(const std::string& ip) override { s.UpdateTarget(ip); }
-    void Close() override { s.Close(); }
-};
-
-struct TcpVideoServerWrap : IStreamer {
-    TcpVideoServer s;
-    bool Initialize(const std::string& /*ip*/, uint16_t port) override { return s.StartListen(port); }
-    bool SendFrame(const uint8_t* d, size_t sz, uint32_t id, uint8_t f) override {
-        return s.SendFrame(d, sz, id, f);
-    }
-    void Close() override { s.Close(); }
-};
-
-// ── VDD auto-resize helpers ──────────────────────────────────────────────────
+// â”€â”€ VDD auto-resize helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 static std::pair<int,int> CalcVddResolution(int and_w, int and_h) {
     if (and_w <= 0 || and_h <= 0) return {0, 0};
@@ -424,7 +282,7 @@ static bool SetVddResolution(int target_w, int target_h) {
     return false;
 }
 
-// ── main ─────────────────────────────────────────────────────────────────────
+// â”€â”€ main â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 int main(int argc, char* argv[]) {
     g_con = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -440,623 +298,279 @@ int main(int argc, char* argv[]) {
 
     GuiLaunch();
     g_gui.setupActive.store(true);
-    strncpy_s(g_gui.setupMsg, "First-time setup: checking Virtual Display Driver…", 255);
+    strncpy_s(g_gui.setupMsg, "First-time setup: checking Virtual Display Driver\u2026", 255);
     if (const std::string e = EnsureVirtualDisplayDriverInstalled(); !e.empty()) {
         strncpy_s(g_gui.setupMsg, e.c_str(), 255);
-        SetColor(YELLOW);
-        std::cout << "[SETUP] " << e << "\n";
-        ResetColor();
+        SetColor(YELLOW); std::cout << "[SETUP] " << e << "\n"; ResetColor();
     } else {
         strncpy_s(g_gui.setupMsg, "First-time setup complete: VDD ready", 255);
     }
     g_gui.setupActive.store(false);
     PrintBanner();
 
-    bool usb_mode     = false;
-    bool hw_enc       = false;
-    bool extend_mode  = false;
-    int  monitor_num  = 0;
-    std::string target_ip;
+    // â”€â”€ Arg parsing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    bool     force_usb    = false;
+    bool     hw_enc       = false;
+    int      monitor_num  = 0;
     uint16_t port         = pocketdisplay::DEFAULT_PORT;
     uint16_t touch_port   = 7778;
     int      bitrate_kbps = 30000;
     int      target_fps   = 60;
 
     for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        if      (arg == "--usb")    { usb_mode    = true; }
-        else if (arg == "--hw")     { hw_enc      = true; }
-        else if (arg == "--extend") { extend_mode = true; }
+        const std::string arg = argv[i];
+        if      (arg == "--usb")    { force_usb  = true; }
+        else if (arg == "--hw")     { hw_enc     = true; }
+        else if (arg == "--extend") { /* mode comes from Android HELLO */ }
         else if (arg.rfind("--monitor=", 0) == 0) { monitor_num = std::stoi(arg.substr(10)); }
-        else if (arg == "--help" || arg == "-h") { PrintUsage(argv[0]); return 0; }
+        else if (arg == "--help" || arg == "-h")   { PrintUsage(argv[0]); return 0; }
         else if (arg == "--port"    && i+1 < argc) port         = static_cast<uint16_t>(std::stoi(argv[++i]));
         else if (arg == "--fps"     && i+1 < argc) target_fps   = std::stoi(argv[++i]);
         else if (arg == "--bitrate" && i+1 < argc) bitrate_kbps = std::stoi(argv[++i]);
-        else if (arg[0] != '-' && target_ip.empty()) target_ip = arg;
-        else if (arg[0] != '-' && !target_ip.empty()) {
-            if (port == pocketdisplay::DEFAULT_PORT) port = static_cast<uint16_t>(std::stoi(arg));
-            else if (bitrate_kbps == 30000)          bitrate_kbps = std::stoi(arg);
-            else if (target_fps == 60)               target_fps   = std::stoi(arg);
-        }
+        // Positional IP / extra args: accepted but unused; HELLO delivers Android IP.
     }
 
-    // ── One-click mode ───────────────────────────────────────────────────────
+    std::signal(SIGINT, SignalHandler);
+
+    // â”€â”€ One-click mode: wait for GUI Start button â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const bool oneClickMode = (argc == 1);
     if (oneClickMode) {
         strncpy_s(g_gui.statusMsg, "Click \u25b6 Start Streaming to begin", 255);
         g_gui.guiStartRequested.store(false);
         g_gui.waitingForStart.store(true);
-        while (g_running && !g_gui.guiStartRequested.load()) {
-            Sleep(100);
-        }
+        while (g_running && !g_gui.guiStartRequested.load()) Sleep(100);
         g_gui.waitingForStart.store(false);
         if (!g_running) return 0;
         strncpy_s(g_gui.statusMsg, "Detecting connection\u2026", 255);
     }
 
-    bool auto_discover = false;
-    if (!usb_mode && target_ip.empty()) {
-        SetColor(YELLOW);
-        std::cout << "  No target IP — ";
-        ResetColor();
-        if (DetectUsbDevice()) {
-            SetColor(GREEN);
-            std::cout << "USB device detected, switching to USB mode.\n";
-            ResetColor();
-            usb_mode = true;
-        } else {
-            std::cout << "will auto-discover Android on LAN.\n";
-            auto_discover = true;
-        }
-    }
-
-    if (usb_mode) target_ip = "127.0.0.1";
-    strncpy_s(g_gui.mode, usb_mode ? "USB" : (target_ip.empty() ? "WiFi (auto)" : "WiFi"), 31);
-
-    std::signal(SIGINT, SignalHandler);
-
-    if (auto_discover) {
-        const auto disc = RunDiscovery(GetLocalIp(), port);
-        if (!g_running) return 0;
-        if (disc.android_ip.empty()) {
-            SetColor(RED);
-            std::cerr << "  ERROR: No Android device responded.\n"
-                      << "         Run: " << argv[0] << " <android_ip>  to skip discovery.\n";
-            ResetColor();
-            return 1;
-        }
-        target_ip   = disc.android_ip;
-        extend_mode = disc.extend;
-    }
-
-    std::unique_ptr<TcpVideoServerWrap> usb_server;
-    if (usb_mode) {
+    // â”€â”€ USB device detection + adb reverse â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    const bool usb_device_present = force_usb || DetectUsbDevice();
+    bool       usb_adb_ready      = false;
+    if (usb_device_present) {
         SetColor(CYAN);
         std::cout << "[USB] Configuring adb reverse (tcp:" << port
                   << ", tcp:" << touch_port << ")...\n";
         ResetColor();
         g_gui.setupActive.store(true);
-        strncpy_s(g_gui.setupMsg, "USB setup: configuring adb reverse…", 255);
-        if (const std::string e = RunAdbUsbReverse(port, touch_port); !e.empty()) {
-            g_gui.setupActive.store(false);
-            strncpy_s(g_gui.setupMsg, e.c_str(), 255);
-            SetColor(RED); std::cerr << "  ERROR: " << e << "\n"; ResetColor();
-            return 1;
-        }
-        strncpy_s(g_gui.setupMsg, "USB setup complete: adb reverse ready", 255);
+        strncpy_s(g_gui.setupMsg, "USB setup: configuring adb reverse\u2026", 255);
+        const std::string adb_err = RunAdbUsbReverse(port, touch_port);
         g_gui.setupActive.store(false);
-        SetColor(GREEN); std::cout << "[USB] adb reverse OK.\n"; ResetColor();
-        StartUsbMonitorThread(port, touch_port, g_running);
-
-        // Give Android's stale socket time to detect the RST from --remove-all
-        // and start retrying before we open the listener. Without this, Android's
-        // existing WiFi-mode TCP socket (bound via the old reverse rule) hangs
-        // and never switches to USB.
-        SetColor(GRAY);
-        std::cout << "[USB] Waiting 500 ms for Android to detect stale socket disconnect...\n";
-        ResetColor();
-        Sleep(500);
-
-        usb_server = std::make_unique<TcpVideoServerWrap>();
-        if (!usb_server->Initialize("", port)) {
-            SetColor(RED);
-            std::cerr << "  ERROR: USB TCP listen failed on port " << port << ".\n";
+        if (!adb_err.empty()) {
+            SetColor(YELLOW);
+            std::cerr << "  [USB] adb reverse failed: " << adb_err << "\n";
             ResetColor();
-            return 1;
-        }
-
-        SetColor(CYAN);
-        std::cout << "[USB] Waiting for Android to connect and select mode "
-                     "(120 s \u2192 Mirror)...\n";
-        ResetColor();
-        usb_server->s.WaitForMode(120000, extend_mode);
-        if (!g_running) return 0;
-
-        SetColor(GREEN);
-        std::cout << "[USB] Mode: " << (extend_mode ? "Extended" : "Mirror") << "\n";
-        ResetColor();
-
-        if (extend_mode) {
-            SetColor(CYAN);
-            std::cout << "[USB] Checking virtual display driver...\n";
-            ResetColor();
-            if (const std::string e = EnsureVirtualDisplayDriverForExtendedMode(); !e.empty()) {
-                SetColor(RED);
-                std::cerr << "  ERROR: " << e << "\n";
-                ResetColor();
-                return 1;
-            }
-
-            int and_w = 0, and_h = 0;
-            usb_server->s.GetAndroidSize(and_w, and_h);
-            if (and_w > 0 && and_h > 0) {
-                SetColor(CYAN);
-                std::cout << "[USB] Android screen: " << and_w << "x" << and_h << "\n";
-                ResetColor();
-                const auto [vdd_w, vdd_h] = CalcVddResolution(and_w, and_h);
-                if (vdd_w > 0) {
-                    SetVddResolution(vdd_w, vdd_h);
-                    Sleep(800);  // let Windows settle before capture
-                }
-            }
+            if (force_usb) { strncpy_s(g_gui.setupMsg, adb_err.c_str(), 255); return 1; }
+        } else {
+            usb_adb_ready = true;
+            strncpy_s(g_gui.setupMsg, "USB setup complete: adb reverse ready", 255);
+            SetColor(GREEN); std::cout << "[USB] adb reverse OK.\n"; ResetColor();
+            Sleep(500);
+            StartUsbMonitorThread(port, touch_port, g_running);
         }
     }
+    strncpy_s(g_gui.mode, (usb_device_present && usb_adb_ready) ? "USB" : "WiFi", 31);
 
-    if (extend_mode && !usb_mode) {
-        SetColor(CYAN);
-        std::cout << "[EXT] Checking virtual display driver...\n";
-        ResetColor();
-        if (const std::string e = EnsureVirtualDisplayDriverForExtendedMode(); !e.empty()) {
-            SetColor(RED);
-            std::cerr << "  ERROR: " << e << "\n";
-            ResetColor();
-            return 1;
-        }
-    }
-
-    const bool extended = extend_mode || monitor_num > 0;
-
-    const char* mode_name = usb_mode ? (extended ? "USB/EXT"  : "USB")
-                                     : (extended ? "WiFi/EXT" : "WiFi");
-    const char* enc_name  = hw_enc   ? "HW"  : "x264";
-
-    // ── Screen capture ───────────────────────────────────────────────────────
-
-    SetColor(CYAN);
-    std::cout << "[1/4] Screen capture...\n";
-    ResetColor();
-
-    const MonitorSel mon_sel = PickMonitor(extend_mode, monitor_num);
-
-    ScreenCapture capture;
-    if (!capture.Initialize(mon_sel.adapter, mon_sel.output)) {
+    // â”€â”€ Always-on HELLO server â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    TcpVideoServer hello_server;
+    if (!hello_server.StartListen(port)) {
         SetColor(RED);
-        std::cerr << "  ERROR: DXGI Desktop Duplication failed for monitor "
-                  << mon_sel.number << " (adapter " << mon_sel.adapter
-                  << ", output " << mon_sel.output << ").\n"
-                  << "         Ensure the monitor is active and supports desktop duplication.\n";
+        std::cerr << "  ERROR: HELLO server listen failed on port " << port << ".\n";
         ResetColor();
         return 1;
     }
-    SetColor(GREEN);
-    std::cout << "      Capture ready: "
-              << capture.GetWidth() << "x" << capture.GetHeight()
-              << (extended ? "  (extended mode)" : "") << "\n";
-    ResetColor();
 
-    // ── Encoder ─────────────────────────────────────────────────────────────
+    // â”€â”€ Session manager â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    std::mutex               session_mu;
+    std::shared_ptr<Session> current_session;
 
-    SetColor(CYAN);
-    std::cout << "[2/4] Encoder (" << enc_name << ", "
-              << bitrate_kbps << " kbps, " << target_fps << " fps)...\n";
-    ResetColor();
+    hello_server.SetHelloCallback(
+        [&](bool extend, int aW, int aH, const std::string& peer, SOCKET sock) {
+        SetColor(GREEN);
+        std::cout << "\n[HELLO] " << (peer == "127.0.0.1" ? "USB" : "WiFi")
+                  << " from " << peer
+                  << "  mode=" << (extend ? "Extended" : "Mirror")
+                  << "  screen=" << aW << "x" << aH << "\n";
+        ResetColor();
 
-    std::unique_ptr<IEncoder> encoder;
-    if (hw_enc) {
-        auto hw = std::make_unique<HwEncoderWrap>();
-        if (hw->Initialize(capture.GetWidth(), capture.GetHeight(),
-                            target_fps, bitrate_kbps)) {
-            encoder = std::move(hw);
-            enc_name = "HW";
-        } else {
-            std::cout << "      Falling back to x264.\n";
-            hw_enc = false;
+        // Stop existing session before creating the new one.
+        std::shared_ptr<Session> old_sess;
+        {
+            std::lock_guard<std::mutex> lk(session_mu);
+            old_sess = std::move(current_session);
         }
-    }
-    if (!encoder) {
-        auto sw = std::make_unique<SwEncoderWrap>();
-        if (!sw->Initialize(capture.GetWidth(), capture.GetHeight(),
-                             target_fps, bitrate_kbps)) {
-            SetColor(RED);
-            std::cerr << "  ERROR: x264 encoder init failed.\n";
-            ResetColor();
-            return 1;
-        }
-        enc_name = "x264";
-        encoder  = std::move(sw);
-    }
-    SetColor(GREEN);
-    std::cout << "      Encoder ready: " << enc_name << "\n";
-    ResetColor();
-
-    // ── Stream transport ─────────────────────────────────────────────────────
-
-    SetColor(CYAN);
-    std::cout << "[3/4] Stream transport (" << mode_name << ")";
-    if (!target_ip.empty()) std::cout << " -> " << target_ip << ":" << port;
-    std::cout << "\n";
-    ResetColor();
-
-    std::unique_ptr<IStreamer> streamer;
-    if (usb_mode) {
-        streamer = std::move(usb_server);
-    } else {
-        auto udp = std::make_unique<UdpStreamerWrap>();
-        if (!udp->Initialize(target_ip, port)) {
-            SetColor(RED);
-            std::cerr << "  ERROR: UDP socket init failed.\n";
-            ResetColor();
-            return 1;
-        }
-        streamer = std::move(udp);
-    }
-    SetColor(GREEN);
-    if (usb_mode)
-        std::cout << "      USB: Android connected on :" << port
-                  << " \u2014 starting stream.\n";
-    else
-        std::cout << "      UDP sender ready.\n";
-    ResetColor();
-
-    // ── Touch receiver ───────────────────────────────────────────────────────
-
-    SetColor(CYAN);
-    std::cout << "[4/4] Touch/keyboard receiver (port " << touch_port << ")...\n";
-    ResetColor();
-
-    TouchReceiver touch;
-
-    // ── Codec config resend thread ────────────────────────────────────────────
-
-    std::atomic<bool> android_ready{false};
-    std::atomic<int>  connect_attempt{0};  // incremented on every (re)connect
-    // Reset android_ready on every reconnect (after the first WaitForMode connection)
-    // so resend_thread re-sends codec config.  Without this, android_ready stays true
-    // after Android disconnects and the decoder never reconfigures on reconnect.
-    // usb_server was moved into streamer above; cast back to reach TcpVideoServer.
-    if (usb_mode) {
-        auto* tcp = static_cast<TcpVideoServerWrap*>(streamer.get());
-        tcp->s.SetReconnectCallback([&]() {
-            const int attempt = connect_attempt.fetch_add(1) + 1;
-            const bool was_ready = android_ready.exchange(false);
+        if (old_sess) {
             SetColor(YELLOW);
-            std::cout << "\n[DBG] ==> RECONNECT attempt #" << attempt
-                      << "  android_ready was=" << (was_ready ? "true" : "false")
-                      << " -> now FALSE  (resend_thread will send codec config)\n";
+            std::cout << "  [HELLO] Stopping previous session...\n";
             ResetColor();
+            old_sess->Stop();
+            old_sess.reset();
+        }
+
+        const bool is_usb = (peer == "127.0.0.1");
+
+        // VDD / resolution setup for Extended mode.
+        if (extend) {
+            if (const std::string e = EnsureVirtualDisplayDriverForExtendedMode(); !e.empty()) {
+                SetColor(YELLOW);
+                std::cerr << "  [HELLO] VDD warning: " << e << "\n";
+                ResetColor();
+            }
+            if (aW > 0 && aH > 0) {
+                const auto [vw, vh] = CalcVddResolution(aW, aH);
+                if (vw > 0) { SetVddResolution(vw, vh); Sleep(800); }
+            }
+        }
+
+        // Pick capture monitor.
+        const MonitorSel mon = PickMonitor(extend, monitor_num);
+        if (mon.adapter < 0) {
+            SetColor(RED);
+            std::cerr << "  [HELLO] Monitor selection failed.\n";
+            ResetColor();
+            if (sock != INVALID_SOCKET) closesocket(sock);
+            return;
+        }
+
+        // Build transport streamer — always TCP (Phase 3: WiFi video moved to TCP).
+        if (sock == INVALID_SOCKET) {
+            SetColor(RED);
+            std::cerr << "  [HELLO] No streaming socket — discarded.\n";
+            ResetColor();
+            return;
+        }
+        std::unique_ptr<IStreamer> streamer = std::make_unique<DirectSocketStreamer>(sock);
+
+        // Build and start session.
+        Session::Config cfg;
+        cfg.adapter_idx  = mon.adapter;
+        cfg.output_idx   = mon.output;
+        cfg.monitor_num  = mon.number;
+        cfg.extend_mode  = extend;
+        cfg.hw_enc       = hw_enc;
+        cfg.android_w    = aW;
+        cfg.android_h    = aH;
+        cfg.bitrate_kbps = bitrate_kbps;
+        cfg.target_fps   = target_fps;
+        cfg.usb_mode     = is_usb;  // true=USB, false=WiFi (both TCP in Phase 3)
+        cfg.touch_port   = touch_port;
+        cfg.streamer     = std::move(streamer);
+
+        auto sess = std::make_shared<Session>(std::move(cfg));
+        if (sess->Start()) {
+            std::lock_guard<std::mutex> lk(session_mu);
+            current_session = std::move(sess);
+            strncpy_s(g_gui.mode, is_usb ? "USB" : "WiFi", 31);
+            SetColor(GREEN); std::cout << "  [HELLO] Session started.\n"; ResetColor();
+        } else {
+            SetColor(RED);
+            std::cerr << "  [HELLO] Session start failed \u2014 waiting for reconnect.\n";
+            ResetColor();
+            strncpy_s(g_gui.statusMsg, "Session init failed \u2014 waiting\u2026", 255);
+        }
+    });
+
+    // â”€â”€ WiFi discovery broadcaster (continuous background; skipped with --usb) â”€â”€
+    std::thread disc_thread;
+    if (!force_usb) {
+        disc_thread = std::thread([&]() {
+            SOCKET ds = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+            if (ds == INVALID_SOCKET) return;
+            BOOL on = TRUE;
+            setsockopt(ds, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<char*>(&on), sizeof(on));
+
+            const std::string local_ip = GetLocalIp();
+            const std::string subnet   = GetSubnetBroadcast(local_ip);
+            const bool dual = (subnet != "255.255.255.255");
+            static constexpr const char* MCAST_GRP = "239.0.0.1";
+
+            sockaddr_in bc_all{}, bc_sub{}, bc_mcast{};
+            bc_all.sin_family      = AF_INET;
+            bc_all.sin_port        = htons(DISC_PORT);
+            bc_all.sin_addr.s_addr = INADDR_BROADCAST;
+            bc_sub.sin_family      = AF_INET;
+            bc_sub.sin_port        = htons(DISC_PORT);
+            inet_pton(AF_INET, subnet.c_str(), &bc_sub.sin_addr);
+            bc_mcast.sin_family    = AF_INET;
+            bc_mcast.sin_port      = htons(DISC_PORT);
+            inet_pton(AF_INET, MCAST_GRP, &bc_mcast.sin_addr);
+
+            DWORD ttl = 4;
+            setsockopt(ds, IPPROTO_IP, IP_MULTICAST_TTL,
+                       reinterpret_cast<char*>(&ttl), sizeof(ttl));
+
+            const std::string ann =
+                std::string("POCKETDISPLAY_HOST:") + local_ip + ":" + std::to_string(port);
+            auto do_bcast = [&]() {
+                sendto(ds, ann.c_str(), static_cast<int>(ann.size()), 0,
+                       reinterpret_cast<sockaddr*>(&bc_all), sizeof(bc_all));
+                if (dual)
+                    sendto(ds, ann.c_str(), static_cast<int>(ann.size()), 0,
+                           reinterpret_cast<sockaddr*>(&bc_sub), sizeof(bc_sub));
+                sendto(ds, ann.c_str(), static_cast<int>(ann.size()), 0,
+                       reinterpret_cast<sockaddr*>(&bc_mcast), sizeof(bc_mcast));
+            };
+
+            SetColor(CYAN);
+            std::cout << "  [Discovery] Broadcasting POCKETDISPLAY_HOST on UDP :"
+                      << DISC_PORT << " (local IP: " << local_ip << ")\n";
+            ResetColor();
+
+            while (g_running) {
+                // Pause while a session is active to prevent spurious reconnects.
+                bool active = false;
+                {
+                    std::lock_guard<std::mutex> lk(session_mu);
+                    active = current_session && current_session->IsRunning();
+                }
+                if (!active) do_bcast();
+                for (int i = 0; i < 20 && g_running; ++i)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            closesocket(ds);
         });
     }
-    // NOTE: reconnect_cb_ is called by AcceptLoop AFTER closing old client_sock_
-    // and setting new one.  The [SOCK] log in AcceptLoop shows when this happens.
-    // IMPORTANT: register callbacks BEFORE touch.Start() opens the port.
-    // If Android launched before Windows, TcpTouchSender is already retrying.
-    // Start() opens the port; Android can connect and fire TcpAcceptLoop in the
-    // tiny gap before SetConnectCallback() runs — connect_cb_ would be null,
-    // touch_socket_ready stays false, and resend_thread deadlocks forever.
-    touch.SetConnectCallback([&]() {
-        SetColor(CYAN);
-        std::cout << "[DBG] touch socket accepted\n" << std::flush;
-        ResetColor();
-    });
-    touch.SetAckCallback([&](const std::string& sender_ip) {
-        const int attempt = connect_attempt.load();
-        if (!usb_mode && !sender_ip.empty() && sender_ip != target_ip) {
-            SetColor(YELLOW);
-            std::cout << "\n[DBG] ==> Android IP changed: " << target_ip
-                      << " -> " << sender_ip << "  updating UDP target\n";
-            ResetColor();
-            target_ip = sender_ip;
-            streamer->UpdateTarget(sender_ip);
-        }
-        android_ready = true;
-        g_gui.connected.store(true);
-        strncpy_s(g_gui.statusMsg, "Android ready \u2014 streaming", 255);
-        SetColor(GREEN);
-        std::cout << "\n[DBG] ==> ACK received on attempt #" << attempt
-                  << "  android_ready -> TRUE  (video frames will flow)\n";
-        ResetColor();
-    });
 
-    // Open the port now \u2014 callbacks already registered, no race window.
-    if (touch.Start(touch_port, usb_mode)) {
-        SetColor(GREEN);
-        std::cout << "      Listening on " << (usb_mode ? "TCP" : "UDP")
-                  << " :" << touch_port << "\n";
-        ResetColor();
-    } else {
-        SetColor(YELLOW);
-        std::cout << "      WARNING: Could not start touch receiver (non-fatal)\n";
-        ResetColor();
-    }
-    if (extended) touch.SetExtendedMonitor(capture.GetMonitorRect());
-
-    const int cap_w = capture.GetWidth();
-    const int cap_h = capture.GetHeight();
-    std::atomic<int> stream_w{cap_w}, stream_h{cap_h};
-    g_gui.capW.store(cap_w);
-    g_gui.capH.store(cap_h);
-    g_gui.streaming.store(true);
-    strncpy_s(g_gui.statusMsg, "Waiting for Android…", 255);
-
-    std::thread resend_thread([&]() {
-        while (g_running) {
-            // Always send stream_info + codec_config so Android can (re)configure
-            // its decoder after any WiFi reconnect or IP change, without waiting
-            // for a signal from Windows.  VideoDecoder.configure() deduplicates
-            // identical SPS: same codec → just re-ACKs; fresh decoder → full init.
-            uint8_t dims[12];
-            const uint32_t sw = htonl(static_cast<uint32_t>(stream_w.load()));
-            const uint32_t sh = htonl(static_cast<uint32_t>(stream_h.load()));
-            const uint32_t sf = htonl(extended ? 1u : 0u);
-            std::memcpy(dims,     &sw, 4);
-            std::memcpy(dims + 4, &sh, 4);
-            std::memcpy(dims + 8, &sf, 4);
-
-            const bool si_ok = streamer->SendFrame(dims, 12, 0, pocketdisplay::FLAG_STREAM_INFO);
-            if (!si_ok) {
-                std::cout << "  [SOCK] resend_thread: SendFrame(stream_info) FAILED"
-                          << " — client_sock_ may be broken or not yet set\n";
-            }
-
-            std::vector<uint8_t> sps_pps;
-            if (encoder->GetConfigPacket(sps_pps) && !sps_pps.empty()) {
-                const bool cc_ok = streamer->SendFrame(sps_pps.data(), sps_pps.size(),
-                                                       0, pocketdisplay::FLAG_CODEC_CONFIG);
-                if (!cc_ok) {
-                    std::cout << "  [SOCK] resend_thread: SendFrame(codec_config) FAILED\n";
-                }
-            }
-
-            for (int i = 0; i < 20 && g_running; ++i)
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-    });
-
-    // ── Cursor thread ────────────────────────────────────────────────────────
-
-    const int  screen_w = GetSystemMetrics(SM_CXSCREEN);
-    const int  screen_h = GetSystemMetrics(SM_CYSCREEN);
-    const RECT mon_rect = extended ? capture.GetMonitorRect()
-                                   : RECT{0, 0, screen_w, screen_h};
-    std::thread cursor_thread([&]() {
-        const HCURSOR c_ibeam    = LoadCursor(NULL, IDC_IBEAM);
-        const HCURSOR c_wait     = LoadCursor(NULL, IDC_WAIT);
-        const HCURSOR c_cross    = LoadCursor(NULL, IDC_CROSS);
-        const HCURSOR c_sizewe   = LoadCursor(NULL, IDC_SIZEWE);
-        const HCURSOR c_sizens   = LoadCursor(NULL, IDC_SIZENS);
-        const HCURSOR c_sizenwse = LoadCursor(NULL, IDC_SIZENWSE);
-        const HCURSOR c_sizenesw = LoadCursor(NULL, IDC_SIZENESW);
-        const HCURSOR c_sizeall  = LoadCursor(NULL, IDC_SIZEALL);
-        const HCURSOR c_hand     = LoadCursor(NULL, IDC_HAND);
-        const HCURSOR c_no       = LoadCursor(NULL, IDC_NO);
-        const HCURSOR c_appstart = LoadCursor(NULL, IDC_APPSTARTING);
-
-        POINT   last_pos  = {-1, -1};
-        uint8_t last_type = 0xFF;
-
-        while (g_running) {
-            POINT      pos = {};
-            CURSORINFO ci  = {};
-            ci.cbSize      = sizeof(ci);
-            const bool got_pos = GetCursorPos(&pos);
-            const bool got_ci  = GetCursorInfo(&ci);
-
-            uint8_t cur_type = 0;
-            if (got_ci) {
-                const HCURSOR hc = ci.hCursor;
-                if      (hc == c_ibeam)    cur_type = 1;
-                else if (hc == c_wait)     cur_type = 2;
-                else if (hc == c_cross)    cur_type = 3;
-                else if (hc == c_sizewe)   cur_type = 4;
-                else if (hc == c_sizens)   cur_type = 5;
-                else if (hc == c_sizenwse) cur_type = 6;
-                else if (hc == c_sizenesw) cur_type = 7;
-                else if (hc == c_sizeall)  cur_type = 8;
-                else if (hc == c_hand)     cur_type = 9;
-                else if (hc == c_no)       cur_type = 10;
-                else if (hc == c_appstart) cur_type = 11;
-            }
-
-            const bool pos_changed  = got_pos && (pos.x != last_pos.x || pos.y != last_pos.y);
-            const bool type_changed = cur_type != last_type;
-
-            if (pos_changed || type_changed) {
-                if (pos_changed)  last_pos  = pos;
-                if (type_changed) last_type = cur_type;
-
-                float nx, ny;
-                if (extended) {
-                    const bool on_mon =
-                        last_pos.x >= mon_rect.left && last_pos.x < mon_rect.right &&
-                        last_pos.y >= mon_rect.top  && last_pos.y < mon_rect.bottom;
-                    if (!on_mon) goto cursor_sleep;
-                    const int mw = mon_rect.right  - mon_rect.left;
-                    const int mh = mon_rect.bottom - mon_rect.top;
-                    nx = static_cast<float>(last_pos.x - mon_rect.left) / mw;
-                    ny = static_cast<float>(last_pos.y - mon_rect.top)  / mh;
-                } else {
-                    nx = static_cast<float>(last_pos.x) / screen_w;
-                    ny = static_cast<float>(last_pos.y) / screen_h;
-                }
-                {
-                    uint32_t nx_be, ny_be;
-                    std::memcpy(&nx_be, &nx, 4); nx_be = htonl(nx_be);
-                    std::memcpy(&ny_be, &ny, 4); ny_be = htonl(ny_be);
-                    uint8_t payload[9];
-                    std::memcpy(payload,     &nx_be, 4);
-                    std::memcpy(payload + 4, &ny_be, 4);
-                    payload[8] = last_type;
-                    streamer->SendFrame(payload, 9, 0, pocketdisplay::FLAG_CURSOR_POS);
-                }
-                cursor_sleep:;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(16));
-        }
-    });
-
-    SetColor(GREEN);
-    std::cout << "\n  Streaming — press Ctrl+C to stop.\n\n";
+    SetColor(CYAN);
+    std::cout << "  Waiting for Android connection on port " << port << "...\n\n";
     ResetColor();
+    strncpy_s(g_gui.statusMsg, "Waiting for connection\u2026", 255);
 
-    // ── Crash log helper ─────────────────────────────────────────────────────
-
-    auto WriteCrashLog = [](const std::string& msg) {
-        char exePath[MAX_PATH] = {};
-        GetModuleFileNameA(nullptr, exePath, MAX_PATH);
-        std::string logPath(exePath);
-        const auto sep = logPath.rfind('\\');
-        logPath = (sep != std::string::npos) ? logPath.substr(0, sep + 1) : "";
-        logPath += "PocketDisplay_crash.log";
-        HANDLE hf = CreateFileA(logPath.c_str(), GENERIC_WRITE, 0, nullptr,
-                                OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (hf != INVALID_HANDLE_VALUE) {
-            SetFilePointer(hf, 0, nullptr, FILE_END);
-            SYSTEMTIME st = {};
-            GetLocalTime(&st);
-            char ts[64] = {};
-            sprintf_s(ts, sizeof(ts), "[%04d-%02d-%02d %02d:%02d:%02d] ",
-                      st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
-            const std::string line = std::string(ts) + msg + "\r\n";
-            DWORD written = 0;
-            WriteFile(hf, line.c_str(), static_cast<DWORD>(line.size()), &written, nullptr);
-            CloseHandle(hf);
-        }
-    };
-
-    // ── Capture / encode / send loop ─────────────────────────────────────────
-
-    std::vector<uint8_t> bgra_buf, nal_buf;
-    uint32_t frame_id    = 1;
-    uint64_t frames_sent = 0;
-    size_t   bytes_sent  = 0;
-
-    const auto frame_interval = std::chrono::microseconds(1'000'000 / target_fps);
-    auto       next_frame     = std::chrono::steady_clock::now();
-    const auto start_time     = next_frame;
-
-    // Hysteresis for resolution changes: require 3 consecutive frames at the new size
-    // before re-initializing the encoder.  Spurious single-frame size changes (common
-    // during DXGI desktop duplication startup or VDD transitions) caused unnecessary
-    // encoder re-inits that triggered Android decoder reconfiguration → green/black frames.
-    int pending_resize_w     = 0;
-    int pending_resize_h     = 0;
-    int resize_stable_count  = 0;
-
-    try {
+    // â”€â”€ Main wait loop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     while (g_running) {
-        const auto now = std::chrono::steady_clock::now();
-        if (now < next_frame)
-            std::this_thread::sleep_for(next_frame - now);
-        next_frame += frame_interval;
-
-        // Gate: jangan kirim video frames sampai Android konfirmasi codec ready
-        if (!android_ready) continue;
-
-        int w = 0, h = 0;
-        if (!capture.CaptureFrame(bgra_buf, w, h)) continue;
-
-        if (w != stream_w.load() || h != stream_h.load()) {
-            // Accumulate consecutive frames at the new size (hysteresis).
-            if (w == pending_resize_w && h == pending_resize_h) {
-                ++resize_stable_count;
-            } else {
-                // New candidate size — reset counter.
-                pending_resize_w    = w;
-                pending_resize_h    = h;
-                resize_stable_count = 1;
-                SetColor(YELLOW);
-                std::cout << "\n[DBG] Resolution candidate: "
-                          << stream_w.load() << "x" << stream_h.load()
-                          << " -> " << w << "x" << h << " (1/3)\n";
-                ResetColor();
-            }
-            if (resize_stable_count >= 3) {
-                // 3 stable frames — commit the re-init.
-                SetColor(YELLOW);
-                std::cout << "\n[DBG] Resolution stable — re-initializing encoder: "
-                          << stream_w.load() << "x" << stream_h.load()
-                          << " -> " << w << "x" << h << "\n";
-                ResetColor();
-                encoder->Close();
-                if (!encoder->Initialize(w, h, target_fps, bitrate_kbps)) {
-                    std::cerr << "  [ERROR] Encoder re-init after resolution change failed\n";
-                    pending_resize_w    = 0;
-                    pending_resize_h    = 0;
-                    resize_stable_count = 0;
-                    continue;
-                }
-                stream_w.store(w);
-                stream_h.store(h);
-                android_ready       = false;  // trigger resend_thread to push new codec config + dims
-                pending_resize_w    = 0;
-                pending_resize_h    = 0;
-                resize_stable_count = 0;
-            }
-            continue;
-        } else {
-            // Dimensions match stream — reset any pending resize hysteresis.
-            if (resize_stable_count > 0) {
-                resize_stable_count = 0;
-                pending_resize_w    = 0;
-                pending_resize_h    = 0;
-            }
+        Sleep(100);
+        std::shared_ptr<Session> sess;
+        {
+            std::lock_guard<std::mutex> lk(session_mu);
+            sess = current_session;
         }
-
-        bool is_keyframe = false;
-        if (!encoder->EncodeFrame(bgra_buf.data(), nal_buf, is_keyframe)) continue;
-        if (nal_buf.empty()) continue;
-
-        const uint8_t flags = is_keyframe ? pocketdisplay::FLAG_KEYFRAME : pocketdisplay::FLAG_NONE;
-        streamer->SendFrame(nal_buf.data(), nal_buf.size(), frame_id++, flags);
-
-        ++frames_sent;
-        bytes_sent += nal_buf.size();
-
-        const double elapsed_s = std::chrono::duration<double>(
-            std::chrono::steady_clock::now() - start_time).count();
-        if (elapsed_s >= 1.0 &&
-            frames_sent % static_cast<uint64_t>(target_fps * 5) == 0) {
-            const double cur_fps = frames_sent / elapsed_s;
-            g_gui.fps.store(static_cast<int>(cur_fps + 0.5));
-            g_gui.bitrateKbps.store(static_cast<int>(bytes_sent * 8.0 / 1000.0 / elapsed_s));
-            PrintStats(cur_fps, bytes_sent * 8.0 / 1000.0 / elapsed_s,
-                       nal_buf.size(), enc_name, mode_name);
+        if (sess && !sess->IsRunning()) {
+            SetColor(YELLOW);
+            std::cout << "\n  [Main] Session ended \u2014 waiting for reconnect...\n";
+            ResetColor();
+            sess->Stop();
+            {
+                std::lock_guard<std::mutex> lk(session_mu);
+                current_session.reset();
+            }
+            sess.reset();
+            g_gui.connected.store(false);
+            strncpy_s(g_gui.statusMsg, "Disconnected \u2014 waiting\u2026", 255);
         }
     }
-    } catch (const std::exception& e) {
-        const std::string msg = std::string("Exception in main loop: ") + e.what();
-        SetColor(RED); std::cerr << "\n[CRASH] " << msg << "\n"; ResetColor();
-        WriteCrashLog(msg);
-        g_running = false;
-    } catch (...) {
-        const std::string msg = "Unknown exception in main loop";
-        SetColor(RED); std::cerr << "\n[CRASH] " << msg << "\n"; ResetColor();
-        WriteCrashLog(msg);
-        g_running = false;
+
+    // â”€â”€ Shutdown â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    SetColor(YELLOW); std::cout << "\n  Shutting down...\n"; ResetColor();
+    {
+        std::lock_guard<std::mutex> lk(session_mu);
+        if (current_session) { current_session->Stop(); current_session.reset(); }
     }
-
-    // ── Shutdown ─────────────────────────────────────────────────────────────
-
+    hello_server.Close();
+    if (disc_thread.joinable()) disc_thread.join();
+    if (usb_device_present && usb_adb_ready) ClearAdbReverse();
     g_gui.streaming.store(false);
     g_gui.connected.store(false);
     strncpy_s(g_gui.statusMsg, "Stopped", 255);
-    std::cout << "\n\n  Shutting down...\n";
-    if (usb_mode) ClearAdbReverse();  // prevent stale rules causing Android to show dialog prematurely
-    if (resend_thread.joinable()) resend_thread.join();
-    if (cursor_thread.joinable()) cursor_thread.join();
-    encoder->Close();
-    streamer->Close();
-    capture.Release();
-    touch.Stop();
+    WSACleanup();
     return 0;
 }

@@ -1,9 +1,6 @@
 package com.pocketdisplay.app
 
 import android.util.Log
-import java.net.DatagramPacket
-import java.net.DatagramSocket
-import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.ByteBuffer
@@ -11,10 +8,9 @@ import java.nio.ByteOrder
 import java.util.concurrent.Executors
 
 /**
- * Sends touch and keyboard events to the Windows host.
- *
- * WiFi mode: UDP datagrams to windowsIp:7778
- * USB mode:  TCP connection to localhost:7778 (adb reverse tcp:7778 tcp:7778)
+ * Sends touch and keyboard events to the Windows host over TCP.
+ * Phase 3: always TCP — USB uses adb reverse tcp:7778 tcp:7778 (loopback),
+ * WiFi connects directly to Windows IP:7778.
  *
  * Packet layout (16 bytes, big-endian):
  *   [0-3]  'P','D','T','I'
@@ -26,8 +22,7 @@ import java.util.concurrent.Executors
  */
 open class TouchSender(
     targetIp: String,
-    private val port: Int = 7778,
-    private val useTcp: Boolean = false
+    private val port: Int = 7778
 ) {
     enum class EventType(val code: Byte) {
         MOVE(0), DOWN(1), UP(2), RIGHT_CLICK(3), SCROLL(4)
@@ -53,8 +48,6 @@ open class TouchSender(
         const val MENU        = 0x12  // Alt
     }
 
-    private val udpSocket    = if (!useTcp) DatagramSocket() else null
-    private val targetAddr   = if (!useTcp) InetAddress.getByName(targetIp) else null
     @Volatile private var tcpSocket: Socket? = null
     private val executor     = Executors.newSingleThreadExecutor()
     // ACK may arrive before the touch socket connects; buffer it and flush on connect.
@@ -63,13 +56,12 @@ open class TouchSender(
     private var connectThread: Thread? = null
 
     init {
-        if (useTcp) {
-            // IMPORTANT: run the connect loop in a dedicated daemon thread, NOT inside
-            // executor.submit().  The executor is a single-thread pool; submitting an
-            // infinite retry loop to it permanently blocks the queue — sendAck() and
-            // all touch/keyboard tasks would wait forever and never execute.
-            val t = Thread({
-                val addr = InetSocketAddress(InetAddress.getByName(targetIp), port)
+        // IMPORTANT: run the connect loop in a dedicated daemon thread, NOT inside
+        // executor.submit().  The executor is a single-thread pool; submitting an
+        // infinite retry loop to it permanently blocks the queue — sendAck() and
+        // all touch/keyboard tasks would wait forever and never execute.
+        val t = Thread({
+                val addr = InetSocketAddress(targetIp, port)
                 Log.i("PocketDisplay", "[DBG#16] TouchSender connect thread started -> $targetIp:$port")
                 var attempt = 0
                 while (!closed) {
@@ -106,10 +98,9 @@ open class TouchSender(
                 }
                 Log.i("PocketDisplay", "[DBG#16] TouchSender connect thread exiting (closed=$closed)")
             }, "TouchSender-Connect")
-            t.isDaemon = true
-            t.start()
-            connectThread = t
-        }
+        t.isDaemon = true
+        t.start()
+        connectThread = t
     }
 
     // ── Touch events ─────────────────────────────────────────────────────────
@@ -161,13 +152,11 @@ open class TouchSender(
     fun sendAck() {
         executor.submit {
             val sock = tcpSocket
-            Log.i("PocketDisplay", "[ACK] sendAck: useTcp=$useTcp tcpSocket=${if (sock != null) "connected" else "null"}")
-            if (!useTcp || sock != null) {
-                // WiFi (UDP): socket always ready — send immediately.
-                // USB (TCP): socket already connected — send directly.
+            Log.i("PocketDisplay", "[ACK] sendAck: tcpSocket=${if (sock != null) "connected" else "null"}")
+            if (sock != null) {
                 rawSend(buildAckPacket())
             } else {
-                // USB TCP touch socket not yet connected; buffer and flush when it connects.
+                // TCP touch socket not yet connected; buffer and flush when it connects.
                 Log.i("PocketDisplay", "[ACK] sendAck: buffered as pendingAck")
                 pendingAck = true
             }
@@ -193,18 +182,11 @@ open class TouchSender(
 
     private fun rawSend(data: ByteArray) {
         try {
-            if (useTcp) {
-                tcpSocket?.getOutputStream()?.write(data)
-            } else {
-                udpSocket?.send(DatagramPacket(data, data.size, targetAddr, port))
-            }
+            tcpSocket?.getOutputStream()?.write(data)
         } catch (e: Exception) {
-            if (useTcp) {
-                Log.w("PocketDisplay", "[ACK] rawSend TCP failed: ${e.message}")
-                // Mark socket as dead so the connect thread reconnects.
-                val dead = tcpSocket; tcpSocket = null
-                try { dead?.close() } catch (_: Exception) {}
-            }
+            Log.w("PocketDisplay", "[touch] rawSend TCP failed: ${e.message}")
+            val dead = tcpSocket; tcpSocket = null
+            try { dead?.close() } catch (_: Exception) {}
         }
     }
 
@@ -212,7 +194,6 @@ open class TouchSender(
         closed = true
         connectThread?.interrupt()
         executor.shutdown()
-        udpSocket?.close()
         tcpSocket?.close()
     }
 }

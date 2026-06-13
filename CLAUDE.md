@@ -4,12 +4,12 @@
 Windows-to-Android screen sharing app (like Super Display).
 - Windows app: C++ (DXGI capture, x264/NVENC encode, Win32 GUI)
 - Android app: Kotlin (MediaCodec decode, Material Design 3)
-- Protocol: Custom binary TCP (USB) & UDP (WiFi)
+- Protocol: Custom binary TCP for all video and touch (USB and WiFi)
 
 ## Tech Stack
 - Windows: C++, DXGI, x264, Win32, CMake
 - Android: Kotlin, MediaCodec, Material Design 3
-- Ports: 7777 (video), 7778 (touch/ACK)
+- Ports: 7777 (video/HELLO), 7778 (touch/ACK), 7779 (UDP discovery — announcement only)
 
 ## Build Commands
 Windows:
@@ -22,13 +22,17 @@ $env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
 adb install -r app\build\outputs\apk\debug\app-debug.apk
 
 ## Key Files
-- windows/src/main.cpp — main streaming loop, one-click mode
+- windows/src/main.cpp — session manager, discovery broadcaster, HELLO server, one-click mode
+- windows/src/Session.h/.cpp — owns one streaming session (capture→encode→send); torn down on disconnect
 - windows/src/GuiApp.cpp — Win32 GUI dashboard
-- windows/src/TcpVideoServer.cpp — USB video server
+- windows/src/TcpVideoServer.cpp — always-on HELLO listener; fires SetHelloCallback on valid HELLO
 - windows/src/TouchReceiver.cpp — touch/ACK receiver
-- android/.../TcpStreamReceiver.kt — USB video client
-- android/.../TcpTouchSender.kt — touch/ACK sender (USB)
-- android/.../MainActivity.kt — main UI & connection logic
+- windows/src/AdbUsbSetup.cpp — adb setup; GetUsbSerial() skips wireless serials (ip:port)
+- android/.../ConnectionManager.kt — connection state machine (USB/WiFi lifecycle, mode persistence)
+- android/.../TcpStreamReceiver.kt — TCP video client (host param; works for both USB and WiFi)
+- android/.../TouchSender.kt — TCP-only touch/ACK sender
+- android/.../TcpTouchSender.kt — thin subclass of TouchSender for USB
+- android/.../MainActivity.kt — UI only; delegates all connection logic to ConnectionManager
 - android/.../VideoDecoder.kt — MediaCodec H.264 decoder
 
 ## Brand
@@ -42,7 +46,9 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 - Mirror & Extended mode: working
 - Touch/keyboard input: working
 - One-click GUI launch: working
-- Auto-reconnect: working
+- Auto-reconnect: working (session-based; no process restart required)
+- Mode switching without restart: working (new HELLO tears down old Session, starts new one)
+- Wireless adb + USB adb coexist: working (adb reverse uses -s <serial> to avoid multi-device error)
 
 ## Known Issues (Open)
 - #20: First-time setup requires too many manual steps (bug)
@@ -66,6 +72,9 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
   - Bug 2 (CRITICAL): Fixed green/black flicker on Windows-first USB — encoder resize logic now requires 3 consecutive frames at the new size before re-initializing (hysteresis). Single-frame DXGI size changes (common during VDD startup/transitions) were triggering unnecessary encoder re-inits that reset android_ready, causing Android decoder reconfiguration and green/black frames. ✅
   - Bug 3 (MEDIUM): Improved Extended mode → Mirror debugging — added [MODE] logging throughout (sendModeSelection, DiscoveryClient.sendMode, TcpStreamReceiver). Added direct UDP fallback in sendModeSelection() for case where discoverClient is null (e.g., due to race with USB probe). Changed Log.d→Log.i in sendMode(). ✅
   - Bug 4 (MEDIUM): USB reconnect stays WiFi — Bug 1 fix (direct setMode without stopReceiver) also removes the 600ms delay for idle WiFi→USB switch, making reconnect faster and more reliable. Improved AdbUsbSetup log: "[USB Monitor] adb reverse re-run: SUCCESS/FAIL". ✅
+- Phase 1 HELLO handshake regressions (2 critical bugs):
+  - Bug A (CRITICAL): Fixed HELLO always carrying mode=Mirror — root cause: in TcpStreamReceiver.start() the !sessionStarted block reset pendingMode=null on every reconnect before the first successful write. When Windows' 5 s RCVTIMEO closed the socket after the user tapped the dialog (write not yet sent, so sessionStarted still false), the user's selection was wiped; modeSelected=true then blocked the dialog from re-showing; the wait-loop timed out → modeActual=null → HELLO not sent → WaitForMode defaulted to Mirror. Fix: removed pendingMode=null from the !sessionStarted block. pendingMode is null by default in a freshly constructed TcpStreamReceiver so new sessions remain clean. Changed file: TcpStreamReceiver.kt. ✅
+  - Bug B (CRITICAL): Fixed codec-config resend loop breaking streaming — root cause: VideoDecoder.configure() called onConfigured?.invoke() even on duplicate SPS (dedup path). resend_thread sends codec_config every 2 s unconditionally; each duplicate triggered onCodecConfigured(), which for WiFi (after firstFrameReceived=true) called stopReceiver() — killing streaming 2 s after the first frame arrived; for USB it reset firstFrameReceived=false causing continuous spurious ACKs. Fix: removed onConfigured call from the dedup branch (silent return). Windows-restart detection still works because that produces a *different* SPS, bypassing dedup and reaching the full reconfigure + onConfigured path. Changed file: VideoDecoder.kt. ✅
 - #19 third post-testing session (logcat-confirmed bugs):
   - Bug 1 (CRITICAL): Fixed Windows closing TCP connection every 3s — Android's usbPollRunnable calls tcpProbe() which creates a real TCP connection to port 7777. TcpVideoServer::AcceptLoop() was accepting probe connections, reading an empty mode line, then: (a) updating mode_value_ to 0 (Mirror), waking WaitForMode() with wrong mode; (b) calling reconnect_cb_() which reset android_ready=false; (c) setting client_sock_ to probe socket, closing the real streaming socket. Fixed in AcceptLoop(): if mode line is empty → log "[USB/video] empty mode line (TCP probe) — discarded" + closesocket + continue, WITHOUT touching client_sock_, mode_value_, or reconnect_cb_. Also added guard for unrecognised (non-POCKETDISPLAY_MODE) lines. ✅
   - Bug 2 (MEDIUM): Fixed Extended mode reverts to Mirror on reconnect — setMode(usb=true) now always resets modeSelected=false, modeDialogShowing=false, selectedMode="mirror" in the USB branch, even when stopReceiver() is not called (idle WiFi→USB switch). Previously, stale modeSelected=true from a prior WiFi session caused autoStartIfNeeded() to skip the mode dialog and start TcpStreamReceiver with the last selectedMode value (which could be "mirror"). ✅
@@ -81,16 +90,69 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 - #9: One-click launch from GUI ✅
 - #7: Video blurry/ghosting ✅
 
-## Connection Flow (USB)
-1. Windows starts → EarlyAdbReverse opens ports 7777/7778
-2. Android connects to 7777 → sends mode (mirror/extend)
-3. Windows WaitForMode() returns
-4. resend_thread immediately sends stream_info + codec_config (no gate)
-5. Android TcpTouchSender connects to 7778 (retries until Windows opens it)
-6. Android configures decoder → sends ACK (retries every 1s until first frame)
-7. android_ready = true → video frames flow
-   Note: TcpTouchSender connect thread is persistent — reconnects automatically
-   if socket dies (e.g. Windows restart). rawSend nulls tcpSocket on failure.
+## HELLO Handshake (Phase 1 — unified in-band mode selection)
+Both USB and WiFi now use the same binary HELLO message to deliver mode.
+Frame: [4-byte BE length = 11][type=4][version=1][mode 0/1][w uint32BE][h uint32BE]
+- type 4 = kHello, version 1, mode 0=mirror / 1=extend
+- w/h = Android screen dimensions
+USB: TcpStreamReceiver sends HELLO as the first framed message on the streaming TCP socket.
+WiFi: Android opens a short-lived TCP connection to Windows:7777, sends HELLO, closes.
+  Windows runs a TcpVideoServer on :7777 in both USB and WiFi modes to accept HELLO.
+Probe guard: connections that close without a valid HELLO are discarded silently.
+Unknown HELLO version: log + default Mirror (graceful reject).
+UDP port 7779 is now ANNOUNCEMENT-ONLY: POCKETDISPLAY_HOST + POCKETDISPLAY_CLIENT.
+  POCKETDISPLAY_MODE packets are no longer sent or handled.
+
+## Phase 2 — Session-based server (refactor/unified-connection)
+Replaced the linear main.cpp streaming script with a persistent server.
+- TcpVideoServer::SetHelloCallback() fires on the AcceptLoop thread for every valid HELLO.
+  USB: hands off the accepted SOCKET to DirectSocketStreamer (caller owns it).
+  WiFi: also hands off SOCKET to DirectSocketStreamer (Phase 3 change — TCP video for WiFi too).
+- Session class owns ScreenCapture + encoder + TouchReceiver + stream/resend/cursor threads.
+  Start() → initialises all; Stop() → signals running_=false, closes streamer socket (unblocks
+  send()), joins all threads, releases capture.
+- On new HELLO: old Session::Stop() called, new Session created.
+- On disconnect: Session::StreamLoop detects SendFrame failure → running_=false;
+  main loop detects !IsRunning() → Stop() + reset → waits for next HELLO.
+- Discovery broadcaster runs continuously on a background thread; pauses while a
+  Session is active (prevents spurious WiFi reconnects during USB session).
+- WaitForMode() and one-shot RunDiscovery blocking calls removed from main().
+
+## Phase 3 — Unified TCP transport (refactor/unified-connection)
+All video and touch now flows over TCP for both USB and WiFi modes.
+- Windows: TcpVideoServer hands off accepted SOCKET for WiFi too (not just USB).
+  TouchReceiver is TCP-only (UdpLoop removed). UdpStreamer removed from build.
+- Android: ConnectionManager replaces the volatile-flag + polling pattern in MainActivity.
+  Manages USB/WiFi lifecycle, discovery, session start/stop, mode persistence.
+  TcpStreamReceiver gains a `host` parameter (supports WiFi IP, not just 127.0.0.1).
+  TouchSender is TCP-only (UDP socket and useTcp param removed).
+  MainActivity is now UI-only — all connection logic delegated to ConnectionManager.
+
+## ADB Multi-device Fix
+- DetectUsbDevice() / GetUsbSerial() now skip entries whose serial contains ':'
+  (wireless-adb format e.g. 192.168.1.5:5555).
+- RunAdbUsbReverse() and ClearAdbReverse() pass -s <usb_serial> on every adb
+  call, preventing "error: more than one device/emulator" when wireless adb is
+  also active alongside a USB device.
+
+## Connection Flow (USB — Phase 2)
+1. Windows starts → DetectUsbDevice() → RunAdbUsbReverse(-s <serial>); StartUsbMonitorThread
+2. TcpVideoServer always-on HELLO listener on :7777
+3. Android connects → sends HELLO; AcceptLoop fires hello_cb_ (hands off SOCKET)
+4. Session::Start() → ScreenCapture + encoder init; touch receiver on :7778 (TCP)
+5. ResendLoop sends stream_info + codec_config every 2s
+6. Android TcpTouchSender connects → ACK received → android_ready=true → frames flow
+7. On disconnect: StreamLoop fails → running_=false → main tears down session; loops back to 2
+
+## Connection Flow (WiFi — Phase 3)
+1. Windows starts → discovery broadcaster on UDP :7779 (continuous background thread)
+2. TcpVideoServer always-on HELLO listener on :7777
+3. Android receives POCKETDISPLAY_HOST → user taps mode dialog
+4. Android opens short-lived TCP to :7777 → sends HELLO → Windows keeps socket open
+5. AcceptLoop fires hello_cb_ (hands off SOCKET for both USB and WiFi)
+6. Session::Start() → capture + encoder + DirectSocketStreamer (TCP); touch receiver on :7778 (TCP)
+7. ACK received → android_ready=true → frames flow
+8. On disconnect/silence: main detects !IsRunning() → Stop(); discovery resumes
 
 ## Important Rules
 - Never use system() or _popen() for adb — causes cmd popup

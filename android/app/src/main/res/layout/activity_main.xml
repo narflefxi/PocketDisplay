@@ -418,6 +418,16 @@
                 android:enabled="false"
                 style="@style/Widget.PocketDisplay.Button.Primary" />
 
+            <!-- Display mode toggle -->
+            <Button
+                android:id="@+id/btnModeToggle"
+                android:layout_width="match_parent"
+                android:layout_height="40dp"
+                android:layout_marginTop="8dp"
+                android:text="Mode: Mirror"
+                android:textSize="13sp"
+                style="@style/Widget.PocketDisplay.Button.Outline" />
+
         </LinearLayout>
 
         <!-- About panel -->

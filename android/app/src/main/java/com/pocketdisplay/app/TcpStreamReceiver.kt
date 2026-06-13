@@ -11,6 +11,7 @@ import kotlin.concurrent.thread
 
 class TcpStreamReceiver(
     surface: Surface,
+    private val host: String = "127.0.0.1",
     private val port: Int,
     private val onStatus: (String) -> Unit,
     private val onDimensions: ((Int, Int) -> Unit)? = null,
@@ -29,7 +30,6 @@ class TcpStreamReceiver(
 ) {
     companion object {
         private const val TAG = "PocketDisplay"
-        private const val HOST = "127.0.0.1"
         private const val MAX_MESSAGE = 8 * 1024 * 1024
     }
 
@@ -64,7 +64,7 @@ class TcpStreamReceiver(
     fun start() {
         if (isRunning) return
         isRunning = true
-        Log.i(TAG, "Mode=USB host=$HOST transport=TCP port=$port")
+        Log.i(TAG, "TcpStreamReceiver host=$host port=$port")
         netThread = thread(name = "TcpStreamReceiver", isDaemon = true) {
             // Counts failed connect attempts before the first successful mode send.
             var connectAttempt = 0
@@ -77,7 +77,13 @@ class TcpStreamReceiver(
                 // send, sessionStarted=true and committedMode is reused on reconnect.
                 if (!sessionStarted) {
                     committedMode = null
-                    pendingMode = null
+                    // pendingMode is intentionally NOT cleared here.  If the user
+                    // already tapped the mode dialog before the connection dropped
+                    // (e.g. Windows' 5 s RCVTIMEO fired), their choice is preserved
+                    // so the next connect attempt sends HELLO immediately without
+                    // re-showing the dialog.  pendingMode is null by default in a
+                    // freshly constructed TcpStreamReceiver, so new sessions always
+                    // start clean regardless of this path.
                 }
 
                 var socket: Socket? = null
@@ -87,7 +93,7 @@ class TcpStreamReceiver(
                         try {
                             val s = Socket()
                             s.tcpNoDelay = true
-                            s.connect(InetSocketAddress(HOST, port), 1500)
+                            s.connect(InetSocketAddress(host, port), 1500)
                             socket = s
                         } catch (_: Exception) {
                             if (!modeEverSent && modeToSend != null) {
@@ -107,7 +113,7 @@ class TcpStreamReceiver(
                     activeSocket = socket
                     streamW = 0; streamH = 0
 
-                    Log.i(TAG, "TCP connected to $HOST:$port")
+                    Log.i(TAG, "TCP connected to $host:$port")
 
                     // Determine which mode to send.
                     //
@@ -152,10 +158,18 @@ class TcpStreamReceiver(
                     }
 
                     if (modeActual != null) {
-                        val dimSuffix = if (screenW > 0 && screenH > 0) ":$screenW:$screenH" else ""
-                        val modeLine = "POCKETDISPLAY_MODE:$modeActual$dimSuffix\n"
-                        Log.i(TAG, "[MODE] USB TCP: sending '$modeLine' (${modeLine.toByteArray(Charsets.US_ASCII).size} bytes)")
-                        socket.getOutputStream().write(modeLine.toByteArray(Charsets.US_ASCII))
+                        // Send framed HELLO: [4-byte BE len=11][type=4][version=1][mode][w32BE][h32BE]
+                        val modeVal  = if (modeActual == "extend") 1.toByte() else 0.toByte()
+                        val helloLen = 11  // type(1)+version(1)+mode(1)+w(4)+h(4)
+                        val frame    = ByteBuffer.allocate(4 + helloLen).order(ByteOrder.BIG_ENDIAN)
+                        frame.putInt(helloLen)   // length prefix
+                        frame.put(4.toByte())    // type = kHello
+                        frame.put(1.toByte())    // protocol_version = 1
+                        frame.put(modeVal)       // mode: 0=mirror, 1=extend
+                        frame.putInt(screenW)    // android_screen_w
+                        frame.putInt(screenH)    // android_screen_h
+                        Log.i(TAG, "[MODE] TCP HELLO: sending mode=$modeActual screen=${screenW}x${screenH} host=$host")
+                        socket.getOutputStream().write(frame.array())
                         socket.getOutputStream().flush()
                         // Remember for reconnects; keep pendingMode non-null too so that if the
                         // write succeeded but the socket drops before Windows reads it, the next
@@ -163,13 +177,11 @@ class TcpStreamReceiver(
                         committedMode = modeActual
                         sessionStarted = true
                         modeEverSent = true
-                        Log.i(TAG, "[MODE] USB TCP: mode sent OK")
+                        Log.i(TAG, "[MODE] TCP HELLO: sent OK")
                     }
 
                     // Notify touch-sender setup now that mode is settled.
-                    Log.i(TAG, "[DBG#16] onSenderIp INVOKING — will create TcpTouchSender")
-                    onSenderIp?.invoke(HOST)
-                    Log.i(TAG, "[DBG#16] onSenderIp RETURNED")
+                    onSenderIp?.invoke(host)
 
                     val input = DataInputStream(socket.getInputStream())
                     val lenBuf = ByteArray(4)
@@ -226,7 +238,7 @@ class TcpStreamReceiver(
                     decoder.release()
                 }
                 if (isRunning) {
-                    onStatus("USB: reconnecting…")
+                    onStatus("Reconnecting…")
                     try { Thread.sleep(500) } catch (_: InterruptedException) {}
                 }
             }

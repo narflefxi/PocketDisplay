@@ -26,18 +26,10 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
 
     companion object {
         private const val TAG = "PocketDisplay"
-        private const val PREF_NAME = "pocketdisplay"
-        private const val PREF_MODE = "mode"   // "wifi" | "usb"
     }
 
     private lateinit var binding: ActivityMainBinding
-    private var receiver: StreamReceiver? = null
-    private var tcpReceiver: TcpStreamReceiver? = null
-    private var discoverClient: DiscoveryClient? = null
-    @Volatile private var discoveredHostIp: String? = null
-    @Volatile private var modeSelected: Boolean = false
-    @Volatile private var modeDialogShowing: Boolean = false
-    @Volatile private var selectedMode: String = "mirror"
+    private lateinit var cm: ConnectionManager
 
     private var multicastLock: WifiManager.MulticastLock? = null
 
@@ -45,60 +37,14 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     @Volatile private var videoH = 0
     @Volatile private var windowsW = 0
     @Volatile private var windowsH = 0
-    @Volatile private var touchSender: TouchSender? = null
 
-    // Computed in applyFillTransform(); read in onWindowsCursorPos() from any thread.
+    // Computed in applyFillTransform(); read in cursor callbacks from any thread.
     @Volatile private var videoScaledW = 0f
     @Volatile private var videoScaledH = 0f
     @Volatile private var videoOffsetX = 0f
     @Volatile private var videoOffsetY = 0f
 
-    private var usbMode = false
-
-    private val usbPollHandler = Handler(Looper.getMainLooper())
-    private val usbPollRunnable = object : Runnable {
-        override fun run() {
-            if (!usbMode) {
-                Thread {
-                    if (tcpProbe()) runOnUiThread {
-                        if (!usbMode) {
-                            if (firstFrameReceived) {
-                                // WiFi receiver is actively streaming — stop it cleanly, then switch.
-                                Log.i(TAG, "[USB] poll: port 7777 reachable — switching from active WiFi stream")
-                                stopReceiver()
-                                Handler(Looper.getMainLooper()).postDelayed({
-                                    setMode(true)
-                                    autoStartIfNeeded()
-                                }, 600)
-                            } else {
-                                // WiFi is idle or connecting (not yet streaming) — switch directly.
-                                // stopReceiver() is unnecessary and was corrupting state on Android-first.
-                                Log.i(TAG, "[USB] poll: port 7777 reachable — switching from idle WiFi state")
-                                setMode(true)
-                                autoStartIfNeeded()
-                            }
-                        }
-                    }
-                }.start()
-            } else if (usbMode) {
-                Thread {
-                    if (!tcpProbe()) runOnUiThread {
-                        Log.i(TAG, "[USB] poll: port 7777 unreachable — switching to WiFi mode")
-                        if (usbMode) {
-                            stopReceiver()
-                            Handler(Looper.getMainLooper()).postDelayed({
-                                setMode(false)
-                                startDiscovery()
-                            }, 600)
-                        }
-                    }
-                }.start()
-            }
-            usbPollHandler.postDelayed(this, 3000)
-        }
-    }
-
-    // Tap detection
+    // ── Tap / gesture state ─────────────────────────────────────────────────
     private var touchDownX = 0f
     private var touchDownY = 0f
     private val TAP_SLOP_PX = 20f
@@ -129,16 +75,6 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         updateStatus("Connecting\u2026 (waiting for video)")
     }
     @Volatile private var videoShowPending = false
-    @Volatile private var firstFrameReceived = false
-
-    private val ackRetryRunnable = object : Runnable {
-        override fun run() {
-            if (firstFrameReceived) return
-            Log.i(TAG, "[ACK] retry — no first frame yet, resending ACK")
-            touchSender?.sendAck()
-            firstFrameHandler.postDelayed(this, 1000)
-        }
-    }
 
     /** Coalesced UI update: decoder / network callbacks can race with layout & [setDefaultBufferSize]. */
     private val applyFillTransformRunnable = Runnable { applyFillTransform() }
@@ -154,7 +90,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     private var statsHandler  = Handler(Looper.getMainLooper())
     private val statsRunnable = object : Runnable {
         override fun run() {
-            if (receiver?.isRunning == true || tcpReceiver?.isRunning == true) {
+            if (cm.isSessionActive) {
                 val fps = "↓ ${framesDecoded / 5} fps"
                 binding.tvStats.text = fps
                 binding.hudStats.text = fps
@@ -182,11 +118,12 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         binding.textureView.surfaceTextureListener = this
         binding.tvDeviceIp.text = "IP: ${getLocalIp()}"
 
-        // TCP probe to 127.0.0.1:7777 — succeeds only when Windows adb reverse is active.
-        detectAndSetMode()
-        usbPollHandler.postDelayed(usbPollRunnable, 3000)
+        cm = ConnectionManager(this)
+        setupConnectionManager()
 
-        binding.btnConnect.setOnClickListener  { toggleReceiver() }
+        binding.btnConnect.setOnClickListener {
+            if (cm.isSessionActive) cm.stopCurrentSession() else cm.retryConnect()
+        }
         binding.navAbout.setOnClickListener {
             binding.panelDashboard.visibility = View.GONE
             binding.panelAbout.visibility = View.VISIBLE
@@ -195,8 +132,12 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
             binding.panelAbout.visibility = View.GONE
             binding.panelDashboard.visibility = View.VISIBLE
         }
-        binding.hudDisconnect.setOnClickListener { stopReceiver() }
+        binding.hudDisconnect.setOnClickListener { cm.stopCurrentSession() }
         binding.hudKeyboard.setOnClickListener { toggleKeyboard() }
+        binding.btnModeToggle.setOnClickListener {
+            cm.toggleDisplayMode()
+            updateModeToggleButton()
+        }
 
         binding.textureView.setOnTouchListener { _, event ->
             handleTouch(event)
@@ -204,272 +145,139 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         }
 
         setupKeyboardCapture()
+        updateModeToggleButton()
         statsHandler.postDelayed(statsRunnable, 5000)
     }
 
-    // ── Mode toggle ──────────────────────────────────────────────────────────
-
-    private fun setMode(usb: Boolean) {
-        if (usbMode == usb) return
-        if (receiver?.isRunning == true || tcpReceiver?.isRunning == true) stopReceiver()
-        usbMode = usb
-        getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit()
-            .putString(PREF_MODE, if (usb) "usb" else "wifi").apply()
-        updateModeUi()
-        if (!usb) {
-            discoveredHostIp = null
-            modeSelected = false
-            modeDialogShowing = false
-            startDiscovery()
-        } else {
-            // Always reset mode-selection state when entering USB mode, even if
-            // stopReceiver() was not called (idle WiFi → USB switch).  Without this,
-            // stale modeSelected=true / selectedMode from a prior WiFi session would
-            // bypass the mode dialog and start TcpStreamReceiver with the wrong mode.
-            modeSelected = false
-            modeDialogShowing = false
-            selectedMode = "mirror"
-            discoverClient?.stop(); discoverClient = null
-        }
-    }
-
-    private fun updateModeUi() {
-        binding.tvConnectionMode.text = if (usbMode) "USB" else "Wi-Fi"
-    }
-
-    private fun detectAndSetMode() {
-        updateStatus("Detecting connection mode…")
-        Thread {
-            val usb = tcpProbe()
+    private fun setupConnectionManager() {
+        cm.onStatus    = { msg -> runOnUiThread { updateStatus(msg) } }
+        cm.onTransport = { label -> runOnUiThread { binding.tvConnectionMode.text = label } }
+        cm.onConnected = { connected ->
             runOnUiThread {
-                Log.i(TAG, "[MODE] startup probe: usbReachable=$usb")
-                usbMode = usb
-                getSharedPreferences(PREF_NAME, MODE_PRIVATE).edit()
-                    .putString(PREF_MODE, if (usb) "usb" else "wifi").apply()
-                updateModeUi()
-                if (usb) {
-                    discoverClient?.stop(); discoverClient = null
-                    autoStartIfNeeded()
+                setStatusDot(connected)
+                if (connected) {
+                    binding.btnConnect.text = "Disconnect"
+                    showStreamingUi()
+                    binding.videoLoadingCover.visibility = View.VISIBLE
+                    firstFrameHandler.removeCallbacks(firstFrameTimeoutRunnable)
+                    firstFrameHandler.postDelayed(firstFrameTimeoutRunnable, 5000)
                 } else {
-                    startDiscovery()
+                    binding.btnConnect.text = "Connect"
+                    showHomeUi()
                 }
             }
-        }.start()
-    }
-
-    private fun tcpProbe(host: String = "127.0.0.1", port: Int = 7777, timeoutMs: Int = 300): Boolean =
-        try {
-            java.net.Socket().use { s ->
-                s.connect(java.net.InetSocketAddress(host, port), timeoutMs)
-                true
+        }
+        cm.onExtendedBadge = { extended ->
+            runOnUiThread {
+                val vis = if (extended) View.VISIBLE else View.GONE
+                binding.tvExtendedBadge.visibility = vis
+                binding.hudExtBadge.visibility     = vis
             }
-        } catch (_: Exception) { false }
-
-    // ── Streaming control ────────────────────────────────────────────────────
-
-    private fun toggleReceiver() {
-        if (receiver?.isRunning == true || tcpReceiver?.isRunning == true) stopReceiver() else startReceiver()
+        }
+        cm.onDisplayMode = { _ -> runOnUiThread { updateModeToggleButton() } }
+        cm.onNeedModeDialog = { hostLabel -> runOnUiThread { showModeDialog(hostLabel) } }
+        cm.onVideoDimensions = { w, h ->
+            videoW = w; videoH = h
+            runOnUiThread {
+                binding.textureView.surfaceTexture?.setDefaultBufferSize(w, h)
+                scheduleApplyFillTransform()
+            }
+        }
+        cm.onWindowsSize = { w, h ->
+            windowsW = w; windowsH = h
+            transformLogged = false
+            runOnUiThread {
+                binding.textureView.surfaceTexture?.setDefaultBufferSize(w, h)
+                scheduleApplyFillTransform()
+            }
+        }
+        cm.onCursorPos = { nx, ny, type ->
+            val vw = if (videoScaledW > 0f) videoScaledW else binding.textureView.width.toFloat()
+            val vh = if (videoScaledH > 0f) videoScaledH else binding.textureView.height.toFloat()
+            if (vw > 0f && vh > 0f) {
+                val sx = videoOffsetX + nx * vw
+                val sy = videoOffsetY + ny * vh
+                runOnUiThread { binding.cursorOverlay.moveTo(sx, sy, type) }
+            }
+        }
+        cm.onFirstFrame = {
+            runOnUiThread {
+                firstFrameHandler.removeCallbacks(firstFrameTimeoutRunnable)
+                binding.videoLoadingCover.visibility = View.GONE
+                binding.textureView.animate().alpha(1f).setDuration(200).start()
+                videoShowPending = false
+            }
+        }
+        cm.onStreamMode = { flags ->
+            val extended = (flags and 1) != 0
+            runOnUiThread {
+                val vis = if (extended) View.VISIBLE else View.GONE
+                binding.tvExtendedBadge.visibility = vis
+                binding.hudExtBadge.visibility     = vis
+            }
+        }
     }
+
+    // ── Mode dialog ───────────────────────────────────────────────────────────
+
+    private fun showModeDialog(hostLabel: String) {
+        AlertDialog.Builder(this)
+            .setTitle("Select Display Mode")
+            .setMessage("$hostLabel\n\nHow should Windows share its screen?")
+            .setPositiveButton("Mirror")   { _, _ -> cm.onModeSelected("mirror") }
+            .setNegativeButton("Extended") { _, _ -> cm.onModeSelected("extend") }
+            .setCancelable(false)
+            .show()
+    }
+
+    private fun updateModeToggleButton() {
+        val mode = cm.displayModeName
+        binding.btnModeToggle.text = if (mode == "extend") "Mode: Extended" else "Mode: Mirror"
+    }
+
+    // ── Streaming UI ──────────────────────────────────────────────────────────
 
     private fun showHomeUi() {
+        hideKeyboard()
+        binding.cursorOverlay.hide()
         binding.homePanel.visibility = View.VISIBLE
         binding.streamHud.visibility = View.GONE
-    }
-
-    private fun showStreamingUi() {
-        binding.homePanel.visibility = View.GONE
-        binding.streamHud.visibility = View.GONE  // revealed on tap
-        binding.hudKeyboard.isEnabled = true
-        binding.hudIp.text = binding.tvDeviceIp.text
-    }
-
-    private fun startReceiver() {
-        binding.textureView.animate().cancel()
-        // DXGI desktop capture is always upside-down; pre-apply the 180° rotation so the
-        // TextureView is already correctly oriented when the loading cover is removed.
-        // Without this, the view stays at rotation=0 (reset in stopReceiver) until
-        // INFO_OUTPUT_FORMAT_CHANGED fires from the decoder — which can lag 2–3 s on some
-        // devices — causing a visible upside-down flash on every reconnect.
-        binding.textureView.rotation = 180f
-        binding.textureView.alpha = 0f
-        videoShowPending = true
-        val st = binding.textureView.surfaceTexture ?: return
-
-        val surface = Surface(st)
-        if (usbMode) {
-            @Suppress("DEPRECATION")
-            val dm = android.util.DisplayMetrics().also { windowManager.defaultDisplay.getRealMetrics(it) }
-            // If mode already chosen (reconnect scenario), pass it directly so it is sent on
-            // connect without going through the dialog.  If mode not yet known, pass
-            // onWindowsReady so the dialog is shown only after TCP connection is confirmed
-            // (Windows is listening and ready to receive the mode string).
-            tcpReceiver = TcpStreamReceiver(
-                surface,
-                port              = StreamReceiver.PORT,
-                onStatus          = ::updateStatus,
-                onDimensions      = ::onVideoDimensions,
-                onSenderIp        = ::onWindowsIpKnown,
-                onWindowsSize     = ::onWindowsSizeKnown,
-                onCursorPos       = ::onWindowsCursorPos,
-                onCodecConfigured = ::onCodecConfigured,
-                onFirstFrame      = ::onFirstFrame,
-                onMode            = ::onStreamMode,
-                onWindowsReady    = { runOnUiThread { onUsbWindowsReady() } },
-                modeToSend        = null,
-                screenW           = dm.widthPixels,
-                screenH           = dm.heightPixels
-            )
-            tcpReceiver?.start()
-        } else {
-            receiver = StreamReceiver(
-                surface,
-                onStatus          = ::updateStatus,
-                onDimensions      = ::onVideoDimensions,
-                onSenderIp        = ::onWindowsIpKnown,
-                onWindowsSize     = ::onWindowsSizeKnown,
-                onCursorPos       = ::onWindowsCursorPos,
-                onCodecConfigured = ::onCodecConfigured,
-                onFirstFrame      = ::onFirstFrame,
-                onMode            = ::onStreamMode
-            )
-            receiver?.start()
-            // Discovery is managed by startDiscovery() / stopReceiver(); don't recreate here.
-        }
-
-        binding.videoLoadingCover.visibility = View.VISIBLE
-        firstFrameHandler.removeCallbacks(firstFrameTimeoutRunnable)
-        firstFrameHandler.postDelayed(firstFrameTimeoutRunnable, 5000)
-
-        binding.btnConnect.text = "Disconnect"
-        showStreamingUi()
-        setStatusDot(connected = false)
-        updateStatus(if (usbMode) "USB: connecting to 127.0.0.1\u2026 (run PocketDisplay.exe --usb on PC)"
-                     else "Streaming from ${discoveredHostIp ?: "unknown"}\u2026")
-    }
-
-    private fun stopReceiver() {
-        firstFrameReceived = true
-        firstFrameHandler.removeCallbacks(ackRetryRunnable)
-        firstFrameHandler.removeCallbacks(firstFrameTimeoutRunnable)
-        videoShowPending = false
-        binding.videoLoadingCover.visibility = View.GONE
         binding.textureView.animate().cancel()
         binding.textureView.alpha = 1f
         binding.textureView.scaleX = 1f
         binding.textureView.scaleY = 1f
         binding.textureView.rotation = 0f
         binding.textureView.removeCallbacks(applyFillTransformRunnable)
-        receiver?.stop(); receiver = null
-        tcpReceiver?.stop(); tcpReceiver = null
-        touchSender?.close(); touchSender = null
-        discoverClient?.stop(); discoverClient = null
-        discoveredHostIp = null
-        modeSelected = false
-        modeDialogShowing = false
-        selectedMode = "mirror"
         videoW = 0; videoH = 0; windowsW = 0; windowsH = 0
         videoScaledW = 0f; videoScaledH = 0f; videoOffsetX = 0f; videoOffsetY = 0f
-        binding.cursorOverlay.hide()
         binding.tvExtendedBadge.visibility = View.GONE
-        binding.btnConnect.text = "Connect"
         binding.hudKeyboard.isEnabled = false
-        showHomeUi()
-        hideKeyboard()
-        setStatusDot(connected = false)
-        updateStatus("Disconnected")
-        firstFrameReceived = false
-        // Restart WiFi discovery so the mode dialog appears fresh on the next connection.
-        // Without this, DiscoveryClient fires onHostFound exactly once then stops; if the
-        // user disconnects manually and Windows is still broadcasting, nobody is listening
-        // and the dialog never appears again until onResume().
-        if (!usbMode) startDiscovery()
-    }
-
-    // ── Callbacks ────────────────────────────────────────────────────────────
-
-    private fun onVideoDimensions(w: Int, h: Int) {
-        videoW = w; videoH = h
-        binding.textureView.surfaceTexture?.setDefaultBufferSize(w, h)
-        scheduleApplyFillTransform()
-    }
-
-    private fun onWindowsIpKnown(ip: String) {
-        Log.i(TAG, "[DBG#16] onWindowsIpKnown called ip=$ip usbMode=$usbMode touchSender=${if (touchSender == null) "null" else "exists"}")
-        if (touchSender == null) {
-            val senderIp = if (usbMode) "127.0.0.1" else ip
-            Log.i(TAG, "[DBG#16] Creating ${if (usbMode) "TcpTouchSender" else "TouchSender"} -> $senderIp:7778")
-            touchSender = if (usbMode) TcpTouchSender(senderIp) else TouchSender(senderIp, useTcp = false)
-            Log.i(TAG, "[DBG#16] touchSender created, connect thread starting")
-            runOnUiThread {
-                binding.hudIp.text = if (usbMode) "USB" else ip
-                setStatusDot(connected = true)
-                updateStatus(if (usbMode) "Streaming via USB" else "Streaming via WiFi ↔ $ip")
-            }
-        }
-    }
-
-    private fun onWindowsSizeKnown(w: Int, h: Int) {
-        windowsW = w; windowsH = h
-        Log.d(TAG, "Windows size known: ${w}x${h}")
-        transformLogged = false
-        // Set buffer size from Windows dimensions immediately — stream info (type 2)
-        // arrives before the codec config, so this prevents the first frames from
-        // rendering at the wrong size and appearing blurry.
-        binding.textureView.surfaceTexture?.setDefaultBufferSize(w, h)
-        scheduleApplyFillTransform()
-    }
-
-    private fun onWindowsCursorPos(nx: Float, ny: Float, type: Int) {
-        val vw = if (videoScaledW > 0f) videoScaledW else binding.textureView.width.toFloat()
-        val vh = if (videoScaledH > 0f) videoScaledH else binding.textureView.height.toFloat()
-        if (vw == 0f || vh == 0f) return
-        val sx = videoOffsetX + nx * vw
-        val sy = videoOffsetY + ny * vh
-        runOnUiThread { binding.cursorOverlay.moveTo(sx, sy, type) }
-    }
-
-    private fun onFirstFrame() {
-        firstFrameReceived = true
-        firstFrameHandler.removeCallbacks(ackRetryRunnable)
+        videoShowPending = false
         firstFrameHandler.removeCallbacks(firstFrameTimeoutRunnable)
-        runOnUiThread { binding.videoLoadingCover.visibility = View.GONE }
+        binding.videoLoadingCover.visibility = View.GONE
     }
 
-    private fun onStreamMode(flags: Int) {
-        val extended = (flags and 1) != 0
-        runOnUiThread {
-            val vis = if (extended) View.VISIBLE else View.GONE
-            binding.tvExtendedBadge.visibility = vis
-            binding.hudExtBadge.visibility = vis
-        }
-    }
-
-    private fun onCodecConfigured() {
-        if (!usbMode && firstFrameReceived) {
-            // WiFi: codec reconfigured while already streaming → Windows restarted.
-            // Post stopReceiver() so discovery restarts and the mode dialog reappears.
-            firstFrameHandler.post { stopReceiver() }
-            return
-        }
-        firstFrameReceived = false
-        firstFrameHandler.removeCallbacks(ackRetryRunnable)
-        touchSender?.sendAck()                               // immediate first attempt
-        firstFrameHandler.postDelayed(ackRetryRunnable, 1000) // retry every 1 s until first frame
+    private fun showStreamingUi() {
+        // DXGI desktop capture is always upside-down; pre-apply the 180° rotation.
+        binding.textureView.animate().cancel()
+        binding.textureView.rotation = 180f
+        binding.textureView.alpha = 0f
+        videoShowPending = true
+        binding.homePanel.visibility = View.GONE
+        binding.streamHud.visibility = View.GONE  // revealed on tap
+        binding.hudKeyboard.isEnabled = true
+        binding.hudIp.text = binding.tvDeviceIp.text
     }
 
     private fun updateStatus(msg: String) {
-        runOnUiThread {
-            binding.tvStatus.text = msg
-            binding.hudStatus.text = msg
-        }
+        binding.tvStatus.text = msg
+        binding.hudStatus.text = msg
     }
 
     private fun setStatusDot(connected: Boolean) {
-        runOnUiThread {
-            val res = if (connected) R.drawable.dot_connected else R.drawable.dot_disconnected
-            binding.statusDot.setBackgroundResource(res)
-            binding.hudDot.setBackgroundResource(res)
-        }
+        val res = if (connected) R.drawable.dot_connected else R.drawable.dot_disconnected
+        binding.statusDot.setBackgroundResource(res)
+        binding.hudDot.setBackgroundResource(res)
     }
 
     // ── Video transform ──────────────────────────────────────────────────────
@@ -525,7 +333,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     // ── Touch handling ───────────────────────────────────────────────────────
 
     private fun handleTouch(event: MotionEvent) {
-        val sender = touchSender
+        val sender = cm.touchSender
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -627,15 +435,11 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
                 val curr = s.toString()
                 val prev = prevInputText
                 if (curr.length > prev.length) {
-                    // Characters added
-                    curr.substring(prev.length).forEach { c ->
-                        touchSender?.sendKeyChar(c)
-                    }
+                    curr.substring(prev.length).forEach { c -> cm.touchSender?.sendKeyChar(c) }
                 } else if (curr.length < prev.length) {
-                    // Backspace(s)
                     repeat(prev.length - curr.length) {
-                        touchSender?.sendKeyVk(TouchSender.WinVK.BACK, true)
-                        touchSender?.sendKeyVk(TouchSender.WinVK.BACK, false)
+                        cm.touchSender?.sendKeyVk(TouchSender.WinVK.BACK, true)
+                        cm.touchSender?.sendKeyVk(TouchSender.WinVK.BACK, false)
                     }
                 }
                 prevInputText = curr
@@ -646,7 +450,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         binding.hiddenInput.setOnKeyListener { _, keyCode, event ->
             val vk = androidToWinVk(keyCode) ?: return@setOnKeyListener false
             val down = event.action == KeyEvent.ACTION_DOWN
-            touchSender?.sendKeyVk(vk, down)
+            cm.touchSender?.sendKeyVk(vk, down)
             true
         }
     }
@@ -715,128 +519,13 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     private fun moveCursorTo(p: Pair<Float, Float>) =
         binding.cursorOverlay.moveTo(p.first, p.second)
 
-    // ── TextureView listener ──────────────────────────────────────────────────
+
+    // -- TextureView / lifecycle --------------------------------------------------
 
     override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
-        runOnUiThread {
-            binding.btnConnect.isEnabled = true
-            scheduleApplyFillTransform()
-            autoStartIfNeeded()
-        }
-    }
-
-    override fun onResume() {
-        super.onResume()
-        if (!usbMode) startDiscovery()          // restart if stopped
-        if (binding.textureView.surfaceTexture != null) autoStartIfNeeded()
-    }
-
-    /** Starts receiver once all conditions are met: surface ready + (USB or WiFi with host). */
-    private fun autoStartIfNeeded() {
-        if (receiver?.isRunning == true || tcpReceiver?.isRunning == true) return
-        if (binding.textureView.surfaceTexture == null) return
-        if (usbMode) {
-            // USB: start TcpStreamReceiver immediately regardless of modeSelected.
-            // If mode not yet known, TcpStreamReceiver calls onWindowsReady once
-            // connected, which shows the dialog at the right moment (Windows confirmed
-            // ready).  If mode already known (reconnect after prior selection), it is
-            // passed as modeToSend and sent immediately on connect.
-            startReceiver()
-            return
-        }
-        if (!modeSelected) return
-        if (discoveredHostIp == null) return
-        startReceiver()
-    }
-
-    /** Called from TcpStreamReceiver's onWindowsReady callback (UI thread). */
-    private fun onUsbWindowsReady() {
-        if (!modeDialogShowing && !modeSelected) showModeDialog("127.0.0.1")
-    }
-
-    /** Begins UDP discovery: listens for Windows broadcasts and prompts for mode selection. */
-    private fun startDiscovery() {
-        if (discoverClient?.isRunning == true) return
-        discoverClient?.stop()
-        discoverClient = DiscoveryClient { hostIp, _ ->
-            discoveredHostIp = hostIp
-            runOnUiThread { showModeDialog(hostIp) }
-        }
-        discoverClient?.start()
-        if (receiver?.isRunning != true) updateStatus("Searching for PocketDisplay host\u2026")
-    }
-
-    /** Shows Mirror / Extended dialog; on selection sends mode to Windows and starts receiver. */
-    private fun showModeDialog(hostIp: String) {
-        modeDialogShowing = true
-        val label = if (usbMode) "USB device connected" else "Host found: $hostIp"
-        updateStatus("$label \u2014 select display mode")
-        AlertDialog.Builder(this)
-            .setTitle("Select Display Mode")
-            .setMessage("$label\n\nHow should Windows share its screen?")
-            .setPositiveButton("Mirror") { _, _ ->
-                modeDialogShowing = false
-                if (usbMode) {
-                    selectedMode = "mirror"
-                    modeSelected = true
-                    updateStatus("Connecting to Windows…")
-                    // TcpStreamReceiver is already connected and waiting for mode.
-                    // setPendingMode wakes its wait loop so mode is sent immediately.
-                    if (tcpReceiver?.isRunning == true) {
-                        tcpReceiver?.setPendingMode("mirror")
-                    } else {
-                        // Fallback: receiver not running (e.g. surface not ready yet);
-                        // autoStartIfNeeded will create it with modeToSend set.
-                        autoStartIfNeeded()
-                    }
-                } else {
-                    sendModeSelection(hostIp, "mirror")
-                }
-            }
-            .setNegativeButton("Extended") { _, _ ->
-                modeDialogShowing = false
-                if (usbMode) {
-                    selectedMode = "extend"
-                    modeSelected = true
-                    updateStatus("Connecting to Windows…")
-                    if (tcpReceiver?.isRunning == true) {
-                        tcpReceiver?.setPendingMode("extend")
-                    } else {
-                        autoStartIfNeeded()
-                    }
-                } else {
-                    sendModeSelection(hostIp, "extend")
-                }
-            }
-            .setCancelable(false)
-            .show()
-    }
-
-    /** Sends mode choice to Windows via UDP (WiFi only). USB sends mode over the video TCP socket. */
-    private fun sendModeSelection(hostIp: String, mode: String) {
-        Log.i(TAG, "[MODE] sendModeSelection: mode='$mode' -> $hostIp:${DiscoveryClient.DISCOVERY_PORT}")
-        val dc = discoverClient
-        if (dc != null) {
-            dc.sendMode(hostIp, mode)
-        } else {
-            // discoverClient may have been nulled (e.g. by stopReceiver during USB probe race).
-            // Fall back to a direct UDP send so the mode always reaches Windows.
-            Log.w(TAG, "[MODE] discoverClient is null — sending mode directly via UDP")
-            Thread {
-                try {
-                    java.net.DatagramSocket().use { s ->
-                        val bytes = "POCKETDISPLAY_MODE:$mode".toByteArray(Charsets.US_ASCII)
-                        s.send(java.net.DatagramPacket(bytes, bytes.size,
-                            java.net.InetAddress.getByName(hostIp), DiscoveryClient.DISCOVERY_PORT))
-                        Log.i(TAG, "[MODE] direct UDP fallback sent OK: '$mode' -> $hostIp")
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "[MODE] direct UDP fallback failed: ${e.message}")
-                }
-            }.also { it.isDaemon = true; it.start() }
-        }
-        modeSelected = true
-        autoStartIfNeeded()
+        binding.btnConnect.isEnabled = true
+        scheduleApplyFillTransform()
+        cm.onSurfaceAvailable(Surface(st), w, h)
     }
 
     override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {
@@ -844,7 +533,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     }
 
     override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
-        stopReceiver()
+        cm.onSurfaceDestroyed()
         runOnUiThread { binding.btnConnect.isEnabled = false }
         return true
     }
@@ -859,7 +548,25 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         }
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    override fun onResume() {
+        super.onResume()
+        cm.onResume()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        cm.onPause()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        statsHandler.removeCallbacks(statsRunnable)
+        cm.destroy()
+        multicastLock?.release()
+        multicastLock = null
+    }
+
+    // -- Helpers ------------------------------------------------------------------
 
     private fun getLocalIp(): String = try {
         NetworkInterface.getNetworkInterfaces()
@@ -869,13 +576,4 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
             .filterNot { it.isLoopbackAddress }
             .firstOrNull()?.hostAddress ?: "unknown"
     } catch (_: Exception) { "unknown" }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        usbPollHandler.removeCallbacks(usbPollRunnable)
-        statsHandler.removeCallbacks(statsRunnable)
-        stopReceiver()
-        multicastLock?.release()
-        multicastLock = null
-    }
 }
