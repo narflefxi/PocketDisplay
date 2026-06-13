@@ -58,6 +58,10 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 - #1: Cursor position mismatch on Android (touch vs mouse) (bug)
 
 ## Recently Fixed
+- Phase 4c/4d/label-fix: Connection Mode label, reconnect speed, codec-config spam ✅
+  - Label fix (Item 1): onTransport callback was only fired at session start (startUsbSession/startWifiSession). On internal TcpStreamReceiver reconnects the early-return in onSenderIpReceived prevented re-emission, leaving stale "—" visible. Fix: re-emit onTransport in onSenderIpReceived before the early-return guard, with a Transport.NONE guard to prevent false emission during concurrent stop/start races. Changed file: android/.../ConnectionManager.kt
+  - Reconnect speed (Item 2): Touch socket (port 7778) retry cycle was 600ms connect timeout + 200ms sleep = ~800ms/attempt; 2-3 attempts = ~1.8s. Reduced to 300ms + 100ms = ~400ms/attempt, cutting touch reconnect to under 1s. Changed file: android/.../TouchSender.kt
+  - Codec-config spam (Item 3): Session::ResendLoop sent stream_info + codec_config unconditionally every 2s, causing continuous "Codec config received" log noise on Android even mid-stream. Added !android_ready_.load() guard so resending stops once ACK is received; automatically resumes when android_ready_ is reset (encoder re-init on resolution change, or new Session from reconnect). Changed file: windows/src/Session.cpp
 - Phase 4b: WiFi→USB hot-switch + Connection Mode label ✅
   - Root cause: StartUsbMonitorThread was only started when USB was present at app launch. Starting in WiFi mode meant no USB monitor ran, so adb reverse was never set up when a cable was plugged mid-session. Android probed 127.0.0.1:7777 once, failed silently, gave up.
   - Windows fix: StartUsbMonitorThread now called unconditionally after startup (main.cpp), regardless of whether USB was present at launch. Monitor detects absent→present USB transition and runs RunAdbUsbReverse(-s <serial> tcp:7777 + tcp:7778) without touching the active WiFi session.

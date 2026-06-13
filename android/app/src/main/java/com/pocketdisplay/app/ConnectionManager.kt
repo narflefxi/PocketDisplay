@@ -316,6 +316,10 @@ class ConnectionManager(private val context: Context) {
     // ── Session event handlers ─────────────────────────────────────────────────
 
     private fun onSenderIpReceived(ip: String) {
+        // Re-confirm transport label on every TCP stream connect (covers reconnects and edge cases).
+        if (currentTransport != Transport.NONE)
+            onTransport?.invoke(if (currentTransport == Transport.USB) "USB" else "Wi-Fi")
+
         if (touchSender != null) return  // already created (auto-reconnect within same session)
         val touchHost = if (currentTransport == Transport.USB) "127.0.0.1" else ip
         Log.i(TAG, "[CM] Creating TouchSender → $touchHost:$TOUCH_PORT")
