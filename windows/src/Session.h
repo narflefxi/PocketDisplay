@@ -15,8 +15,8 @@
 #include <vector>
 
 // ── Transport abstraction ─────────────────────────────────────────────────────
-// Implementations: DirectSocketStreamer (USB TCP) and UdpStreamerWrap (WiFi UDP),
-// both defined in main.cpp.  Session only calls SendFrame / Close.
+// Implementation: DirectSocketStreamer (TCP, used for both USB and WiFi),
+// defined in main.cpp.  Session only calls SendFrame / Close.
 struct IStreamer {
     virtual bool SendFrame(const uint8_t* data, size_t size,
                            uint32_t frame_id, uint8_t flags) = 0;

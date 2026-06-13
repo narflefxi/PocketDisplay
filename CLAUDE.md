@@ -31,7 +31,6 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 - android/.../ConnectionManager.kt — connection state machine (USB/WiFi lifecycle, mode persistence)
 - android/.../TcpStreamReceiver.kt — TCP video client (host param; works for both USB and WiFi)
 - android/.../TouchSender.kt — TCP-only touch/ACK sender
-- android/.../TcpTouchSender.kt — thin subclass of TouchSender for USB
 - android/.../MainActivity.kt — UI only; delegates all connection logic to ConnectionManager
 - android/.../VideoDecoder.kt — MediaCodec H.264 decoder
 
@@ -141,7 +140,7 @@ All video and touch now flows over TCP for both USB and WiFi modes.
 3. Android connects → sends HELLO; AcceptLoop fires hello_cb_ (hands off SOCKET)
 4. Session::Start() → ScreenCapture + encoder init; touch receiver on :7778 (TCP)
 5. ResendLoop sends stream_info + codec_config every 2s
-6. Android TcpTouchSender connects → ACK received → android_ready=true → frames flow
+6. Android TouchSender connects → ACK received → android_ready=true → frames flow
 7. On disconnect: StreamLoop fails → running_=false → main tears down session; loops back to 2
 
 ## Connection Flow (WiFi — Phase 3)
