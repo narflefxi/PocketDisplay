@@ -7,53 +7,28 @@
 
 TouchReceiver::~TouchReceiver() { Stop(); }
 
-bool TouchReceiver::Start(uint16_t port, bool tcp_mode) {
-    tcp_mode_ = tcp_mode;
+bool TouchReceiver::Start(uint16_t port) {
+    // Phase 3: always TCP — used for both USB (via adb reverse) and WiFi (direct).
+    sock_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock_ == INVALID_SOCKET) return false;
 
-    if (tcp_mode) {
-        // TCP server — Android connects after: adb reverse tcp:7778 tcp:7778
-        sock_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-        if (sock_ == INVALID_SOCKET) return false;
+    int reuse = 1;
+    setsockopt(sock_, SOL_SOCKET, SO_REUSEADDR,
+               reinterpret_cast<const char*>(&reuse), sizeof(reuse));
 
-        int reuse = 1;
-        setsockopt(sock_, SOL_SOCKET, SO_REUSEADDR,
-                   reinterpret_cast<const char*>(&reuse), sizeof(reuse));
+    sockaddr_in addr = {};
+    addr.sin_family      = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port        = htons(port);
 
-        sockaddr_in addr = {};
-        addr.sin_family      = AF_INET;
-        addr.sin_addr.s_addr = INADDR_ANY;
-        addr.sin_port        = htons(port);
-
-        if (bind(sock_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR ||
-            listen(sock_, 1) == SOCKET_ERROR) {
-            closesocket(sock_);
-            sock_ = INVALID_SOCKET;
-            return false;
-        }
-        running_ = true;
-        thread_  = std::thread(&TouchReceiver::TcpAcceptLoop, this);
-    } else {
-        // UDP — existing WiFi path
-        sock_ = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-        if (sock_ == INVALID_SOCKET) return false;
-
-        int reuse = 1;
-        setsockopt(sock_, SOL_SOCKET, SO_REUSEADDR,
-                   reinterpret_cast<const char*>(&reuse), sizeof(reuse));
-
-        sockaddr_in addr = {};
-        addr.sin_family      = AF_INET;
-        addr.sin_addr.s_addr = INADDR_ANY;
-        addr.sin_port        = htons(port);
-
-        if (bind(sock_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR) {
-            closesocket(sock_);
-            sock_ = INVALID_SOCKET;
-            return false;
-        }
-        running_ = true;
-        thread_  = std::thread(&TouchReceiver::UdpLoop, this);
+    if (bind(sock_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == SOCKET_ERROR ||
+        listen(sock_, 1) == SOCKET_ERROR) {
+        closesocket(sock_);
+        sock_ = INVALID_SOCKET;
+        return false;
     }
+    running_ = true;
+    thread_  = std::thread(&TouchReceiver::TcpAcceptLoop, this);
     return true;
 }
 
@@ -109,26 +84,11 @@ void TouchReceiver::ProcessPacket(const uint8_t* buf, int len) {
         InjectVirtualKey(be_u16(pkt->payload), type == 6);
     } else if (type == 8) {
         // Codec-ready ACK from Android
-        if (ack_cb_) ack_cb_(last_udp_sender_);
+        if (ack_cb_) ack_cb_("");
     }
 }
 
 // ── Transport loops ──────────────────────────────────────────────────────────
-
-void TouchReceiver::UdpLoop() {
-    uint8_t buf[sizeof(TouchPacket)];
-    sockaddr_in sender_addr = {};
-    int sender_len = sizeof(sender_addr);
-    while (running_) {
-        int n = recvfrom(sock_, reinterpret_cast<char*>(buf), sizeof(buf), 0,
-                         reinterpret_cast<sockaddr*>(&sender_addr), &sender_len);
-        if (n <= 0) break;
-        char ip_buf[INET_ADDRSTRLEN] = {};
-        inet_ntop(AF_INET, &sender_addr.sin_addr, ip_buf, sizeof(ip_buf));
-        last_udp_sender_ = ip_buf;
-        ProcessPacket(buf, n);
-    }
-}
 
 void TouchReceiver::TcpAcceptLoop() {
     while (running_) {

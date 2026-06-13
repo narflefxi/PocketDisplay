@@ -1,5 +1,4 @@
 ﻿#include "Session.h"
-#include "UdpStreamer.h"
 #include "TcpVideoServer.h"
 #include "AdbUsbSetup.h"
 #include "Protocol.h"
@@ -195,16 +194,8 @@ static std::string GetSubnetBroadcast(const std::string& local_ip) {
 
 // â”€â”€ Streamer implementations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-// WiFi: wraps UdpStreamer.
-struct UdpStreamerWrap : IStreamer {
-    UdpStreamer s;
-    bool Initialize(const std::string& ip, uint16_t port) { return s.Initialize(ip, port); }
-    bool SendFrame(const uint8_t* d, size_t sz, uint32_t id, uint8_t f) override { return s.SendFrame(d,sz,id,f); }
-    void UpdateTarget(const std::string& ip) override { s.UpdateTarget(ip); }
-    void Close() override { s.Close(); }
-};
-
-// USB: owns the TCP socket handed off from TcpVideoServer's AcceptLoop.
+// Owns the TCP socket handed off from TcpVideoServer's AcceptLoop.
+// Used for both USB (peer=127.0.0.1) and WiFi (Phase 3: video is now always TCP).
 struct DirectSocketStreamer : IStreamer {
     SOCKET     sock_ = INVALID_SOCKET;
     std::mutex mu_;
@@ -437,22 +428,18 @@ int main(int argc, char* argv[]) {
             SetColor(RED);
             std::cerr << "  [HELLO] Monitor selection failed.\n";
             ResetColor();
-            if (is_usb && sock != INVALID_SOCKET) closesocket(sock);
+            if (sock != INVALID_SOCKET) closesocket(sock);
             return;
         }
 
-        // Build transport streamer.
-        std::unique_ptr<IStreamer> streamer;
-        if (is_usb) {
-            streamer = std::make_unique<DirectSocketStreamer>(sock);
-        } else {
-            auto udp = std::make_unique<UdpStreamerWrap>();
-            if (!udp->Initialize(peer, port)) {
-                SetColor(RED); std::cerr << "  [HELLO] UDP init failed.\n"; ResetColor();
-                return;
-            }
-            streamer = std::move(udp);
+        // Build transport streamer — always TCP (Phase 3: WiFi video moved to TCP).
+        if (sock == INVALID_SOCKET) {
+            SetColor(RED);
+            std::cerr << "  [HELLO] No streaming socket — discarded.\n";
+            ResetColor();
+            return;
         }
+        std::unique_ptr<IStreamer> streamer = std::make_unique<DirectSocketStreamer>(sock);
 
         // Build and start session.
         Session::Config cfg;
@@ -465,7 +452,7 @@ int main(int argc, char* argv[]) {
         cfg.android_h    = aH;
         cfg.bitrate_kbps = bitrate_kbps;
         cfg.target_fps   = target_fps;
-        cfg.usb_mode     = is_usb;
+        cfg.usb_mode     = is_usb;  // true=USB, false=WiFi (both TCP in Phase 3)
         cfg.touch_port   = touch_port;
         cfg.streamer     = std::move(streamer);
 

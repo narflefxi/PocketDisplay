@@ -209,13 +209,10 @@ void TcpVideoServer::AcceptLoop() {
 
             // ── Session-based path (hello_cb_ set) ──────────────────────────
             // Fire the callback inside this scope while val/aW/aH are live.
+            // Phase 3: both USB and WiFi stream over TCP — hand off the socket
+            // for both transports. Caller takes ownership via DirectSocketStreamer.
             if (hello_cb_) {
-                const bool is_usb = (strcmp(peer_ip, "127.0.0.1") == 0);
-                // For WiFi the HELLO connection is short-lived — close it here.
-                // For USB the caller takes ownership of the socket.
-                const SOCKET hand_sock = is_usb ? c : INVALID_SOCKET;
-                if (!is_usb) { closesocket(c); }
-                hello_cb_(val == 1, aW, aH, std::string(peer_ip), hand_sock);
+                hello_cb_(val == 1, aW, aH, std::string(peer_ip), c);
                 continue;  // skip legacy client_sock_ / reconnect_cb_ management
             }
         }

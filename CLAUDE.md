@@ -4,7 +4,7 @@
 Windows-to-Android screen sharing app (like Super Display).
 - Windows app: C++ (DXGI capture, x264/NVENC encode, Win32 GUI)
 - Android app: Kotlin (MediaCodec decode, Material Design 3)
-- Protocol: Custom binary TCP (USB) & UDP (WiFi)
+- Protocol: Custom binary TCP for all video and touch (USB and WiFi)
 
 ## Tech Stack
 - Windows: C++, DXGI, x264, Win32, CMake
@@ -28,9 +28,11 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 - windows/src/TcpVideoServer.cpp — always-on HELLO listener; fires SetHelloCallback on valid HELLO
 - windows/src/TouchReceiver.cpp — touch/ACK receiver
 - windows/src/AdbUsbSetup.cpp — adb setup; GetUsbSerial() skips wireless serials (ip:port)
-- android/.../TcpStreamReceiver.kt — USB video client
-- android/.../TcpTouchSender.kt — touch/ACK sender (USB)
-- android/.../MainActivity.kt — main UI & connection logic
+- android/.../ConnectionManager.kt — connection state machine (USB/WiFi lifecycle, mode persistence)
+- android/.../TcpStreamReceiver.kt — TCP video client (host param; works for both USB and WiFi)
+- android/.../TouchSender.kt — TCP-only touch/ACK sender
+- android/.../TcpTouchSender.kt — thin subclass of TouchSender for USB
+- android/.../MainActivity.kt — UI only; delegates all connection logic to ConnectionManager
 - android/.../VideoDecoder.kt — MediaCodec H.264 decoder
 
 ## Brand
@@ -105,7 +107,7 @@ UDP port 7779 is now ANNOUNCEMENT-ONLY: POCKETDISPLAY_HOST + POCKETDISPLAY_CLIEN
 Replaced the linear main.cpp streaming script with a persistent server.
 - TcpVideoServer::SetHelloCallback() fires on the AcceptLoop thread for every valid HELLO.
   USB: hands off the accepted SOCKET to DirectSocketStreamer (caller owns it).
-  WiFi: closes the short-lived connection; UDP target = peer_ip from HELLO.
+  WiFi: also hands off SOCKET to DirectSocketStreamer (Phase 3 change — TCP video for WiFi too).
 - Session class owns ScreenCapture + encoder + TouchReceiver + stream/resend/cursor threads.
   Start() → initialises all; Stop() → signals running_=false, closes streamer socket (unblocks
   send()), joins all threads, releases capture.
@@ -115,6 +117,16 @@ Replaced the linear main.cpp streaming script with a persistent server.
 - Discovery broadcaster runs continuously on a background thread; pauses while a
   Session is active (prevents spurious WiFi reconnects during USB session).
 - WaitForMode() and one-shot RunDiscovery blocking calls removed from main().
+
+## Phase 3 — Unified TCP transport (refactor/unified-connection)
+All video and touch now flows over TCP for both USB and WiFi modes.
+- Windows: TcpVideoServer hands off accepted SOCKET for WiFi too (not just USB).
+  TouchReceiver is TCP-only (UdpLoop removed). UdpStreamer removed from build.
+- Android: ConnectionManager replaces the volatile-flag + polling pattern in MainActivity.
+  Manages USB/WiFi lifecycle, discovery, session start/stop, mode persistence.
+  TcpStreamReceiver gains a `host` parameter (supports WiFi IP, not just 127.0.0.1).
+  TouchSender is TCP-only (UDP socket and useTcp param removed).
+  MainActivity is now UI-only — all connection logic delegated to ConnectionManager.
 
 ## ADB Multi-device Fix
 - DetectUsbDevice() / GetUsbSerial() now skip entries whose serial contains ':'
@@ -132,13 +144,13 @@ Replaced the linear main.cpp streaming script with a persistent server.
 6. Android TcpTouchSender connects → ACK received → android_ready=true → frames flow
 7. On disconnect: StreamLoop fails → running_=false → main tears down session; loops back to 2
 
-## Connection Flow (WiFi — Phase 2)
+## Connection Flow (WiFi — Phase 3)
 1. Windows starts → discovery broadcaster on UDP :7779 (continuous background thread)
 2. TcpVideoServer always-on HELLO listener on :7777
 3. Android receives POCKETDISPLAY_HOST → user taps mode dialog
-4. Android opens short-lived TCP to :7777 → sends HELLO → closes
-5. AcceptLoop fires hello_cb_ (peer IP ≠ 127.0.0.1 → WiFi path; SOCKET=INVALID)
-6. Session::Start() → capture + encoder + UdpStreamer to peer_ip; touch receiver on :7778 (UDP)
+4. Android opens short-lived TCP to :7777 → sends HELLO → Windows keeps socket open
+5. AcceptLoop fires hello_cb_ (hands off SOCKET for both USB and WiFi)
+6. Session::Start() → capture + encoder + DirectSocketStreamer (TCP); touch receiver on :7778 (TCP)
 7. ACK received → android_ready=true → frames flow
 8. On disconnect/silence: main detects !IsRunning() → Stop(); discovery resumes
 

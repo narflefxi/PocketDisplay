@@ -103,7 +103,7 @@ bool Session::Start() {
     touch_.SetConnectCallback([]() {
         std::cout << "  [Session] Touch socket accepted.\n";
     });
-    if (!touch_.Start(cfg_.touch_port, cfg_.usb_mode)) {
+    if (!touch_.Start(cfg_.touch_port)) {
         std::cerr << "  [Session] WARNING: touch receiver failed to start (non-fatal)\n";
     }
     if (cfg_.extend_mode) touch_.SetExtendedMonitor(capture_.GetMonitorRect());
@@ -118,7 +118,7 @@ bool Session::Start() {
     stream_thread_ = std::thread(&Session::StreamLoop, this);
 
     std::cout << "  [Session] Started: mode=" << (cfg_.extend_mode ? "Extended" : "Mirror")
-              << "  transport=" << (cfg_.usb_mode ? "USB/TCP" : "WiFi/UDP") << "\n";
+              << "  transport=" << (cfg_.usb_mode ? "USB/TCP" : "WiFi/TCP") << "\n";
     return true;
 }
 
