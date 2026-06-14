@@ -42,20 +42,22 @@ Message types:
 ### Android receiver (`android/app/src/main/java/com/pocketdisplay/app/`)
 - `MainActivity.kt`: Uses `DataInputStream.readFully()` for strict framing reads.
 - **Video rendering**: `setTransform(null)` + `textureView.rotation = 180f` — buffer is stretched to fill the full TextureView then rotated 180°. No custom matrix.
-- **Touch → Windows** (`toNormalized`): Inverts both axes to match 180° rotation:
+- **Touch → Windows** (`toNormalized`): Direct linear mapping (no axis inversion).
+  `rotation=180f` corrects the OpenGL y-flip from MediaCodec so physical top = Windows TOP.
+  Touch events carry raw screen coords — the visual rotation does NOT invert event.x/y:
   ```kotlin
-  nx = (1f - tx / vw).coerceIn(0f, 1f)
-  ny = (1f - ty / vh).coerceIn(0f, 1f)
+  nx = ((tx - videoOffsetX) / videoScaledW).coerceIn(0f, 1f)
+  ny = ((ty - videoOffsetY) / videoScaledH).coerceIn(0f, 1f)
   ```
-- **Touch cursor overlay** (`toScreenPosition`): Inverse of `toNormalized` so overlay appears where finger is:
+- **Touch cursor overlay** (`toScreenPosition`): Inverse of `toNormalized` — overlay appears at finger position:
   ```kotlin
-  sx = (1f - nx) * vw
-  sy = (1f - ny) * vh
+  sx = videoOffsetX + nx * videoScaledW
+  sy = videoOffsetY + ny * videoScaledH
   ```
-- **Windows cursor → overlay** (`onWindowsCursorPos`): Raw mapping against full view size (no inversion — `setTransform(null)` stretches buffer to fill view, no letterbox offset):
+- **Windows cursor → overlay** (`onCursorPos`): Same direct mapping within the letterboxed video area:
   ```kotlin
-  sx = nx * vw
-  sy = ny * vh
+  sx = videoOffsetX + nx * videoScaledW
+  sy = videoOffsetY + ny * videoScaledH
   ```
 - `CursorOverlayView.kt`: Draws a Windows-style arrow cursor. Hotspot at `(0,0)` = tip; path scaled by `s = displayMetrics.density` (dp units). No rotation applied to the overlay itself.
 
@@ -64,6 +66,5 @@ Message types:
 ## Do Not Change
 - WiFi UDP mode
 - TCP framing format
-- `toNormalized()` touch mapping
-- `textureView.rotation = 180f`
+- `textureView.rotation = 180f` (corrects OpenGL y-flip; must stay)
 - MediaCodec decoder logic

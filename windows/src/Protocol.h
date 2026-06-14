@@ -14,4 +14,9 @@ enum PacketFlags : uint8_t {
     FLAG_CURSOR_POS   = 0x08,  // 9-byte payload: float nx, float ny, uint8 cursor_type
 };
 
+// Sentinel cursor_type value sent in a FLAG_CURSOR_POS packet when the PC cursor leaves
+// the extended display region (extended mode only).  Android hides the overlay on receipt.
+// Normal cursor types are small integers 0–11; 0xFF is safely outside that range.
+constexpr uint8_t CURSOR_TYPE_HIDDEN = 0xFF;
+
 } // namespace pocketdisplay

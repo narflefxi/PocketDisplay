@@ -91,7 +91,7 @@ static void DrawLogo(HDC dc, int x, int y, int s) {
 
 // ── Nav items ─────────────────────────────────────────────────────────────────
 struct NavItem { const wchar_t* label; };
-static const NavItem NAV[] = {{L"Dashboard"}, {L"Connection"}, {L"Settings"}, {L"About"}};
+static const NavItem NAV[] = {{L"Dashboard"}, {L"About"}};
 static int g_page = 0;
 
 // ── Sidebar logo bitmap ───────────────────────────────────────────────────────
@@ -184,7 +184,7 @@ static void PaintSidebar(HDC dc, int winH) {
     int navStart = g_logoTextBmp ? (6 + g_logoTextH + 14) : 68;
     HFONT fNav = MakeFont(12, false, L"Space Grotesk");
     SelectObject(dc, fNav);
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 2; ++i) {
         int iy = navStart + i*44;
         bool active = (i == g_page);
         if (active) {
@@ -332,39 +332,40 @@ static void PaintContent(HDC dc, int winW, int winH) {
     switch (g_page) {
     case 0: PaintDashboard(dc, cx, cy, cw, ch); break;
     case 1: {
-        HFONT f = MakeFont(18, false, L"Anton");
-        SelectObject(dc, f);
-        DrawText_(dc, L"Connection", cx+20, cy+18, cw-40, 32, C_TEXT);
-        DeleteObject(f);
-        HFONT fs = MakeFont(12, false, L"Space Grotesk");
-        SelectObject(dc, fs);
-        DrawText_(dc, L"USB mode: adb reverse tcp:7777 tcp:7777", cx+20, cy+70, cw-40, 24, C_MUTED);
-        DrawText_(dc, L"WiFi mode: auto-discovery via UDP broadcast :7779", cx+20, cy+98, cw-40, 24, C_MUTED);
-        DeleteObject(fs);
-        break;
-    }
-    case 2: {
-        HFONT f = MakeFont(18, false, L"Anton");
-        SelectObject(dc, f);
-        DrawText_(dc, L"Settings", cx+20, cy+18, cw-40, 32, C_TEXT);
-        DeleteObject(f);
-        HFONT fs = MakeFont(12, false, L"Space Grotesk");
-        SelectObject(dc, fs);
-        DrawText_(dc, L"Mirror / Extended mode, bitrate and FPS are set via CLI flags.", cx+20, cy+70, cw-40, 24, C_MUTED);
-        DrawText_(dc, L"Example:  PocketDisplay.exe --extend --bitrate=12000 --fps=60", cx+20, cy+98, cw-40, 24, C_MUTED);
-        DeleteObject(fs);
-        break;
-    }
-    case 3: {
-        HFONT f = MakeFont(18, false, L"Anton");
-        SelectObject(dc, f);
-        DrawText_(dc, L"About PocketDisplay", cx+20, cy+18, cw-40, 32, C_TEXT);
-        DeleteObject(f);
-        HFONT fs = MakeFont(12, false, L"Space Grotesk");
-        SelectObject(dc, fs);
-        DrawText_(dc, L"Version 0.1.0  ·  Use your Android phone as a wireless/USB display.", cx+20, cy+70, cw-40, 24, C_MUTED);
-        DrawText_(dc, L"github.com/pocketdisplay", cx+20, cy+98, cw-40, 24, C_ORANGE);
-        DeleteObject(fs);
+        HFONT fTitle = MakeFont(20, false, L"Anton");
+        SelectObject(dc, fTitle);
+        DrawText_(dc, L"About", cx+20, cy+18, cw-40, 32, C_TEXT);
+        DeleteObject(fTitle);
+
+        HFONT fLabel = MakeFont(10, false, L"Space Grotesk");
+        HFONT fVal   = MakeFont(16, true,  L"Space Grotesk");
+        HFONT fBody  = MakeFont(12, false, L"Space Grotesk");
+
+        /* Card 1 - app name + tagline */
+        int card1Y = cy + 62;
+        RoundRectFill(dc, cx+20, card1Y, cw-40, 72, 12, C_CARD);
+        SelectObject(dc, fVal);
+        DrawText_(dc, L"PocketDisplay v1.0", cx+36, card1Y+10, cw-80, 24, C_TEXT);
+        SelectObject(dc, fBody);
+        DrawText_(dc, L"Turn your Android into a wireless second display for Windows",
+                  cx+36, card1Y+40, cw-80, 22, C_MUTED);
+
+        /* Card 2 - quick start */
+        int card2Y = card1Y + 84;
+        RoundRectFill(dc, cx+20, card2Y, cw-40, 142, 12, C_CARD);
+        SelectObject(dc, fLabel);
+        DrawText_(dc, L"QUICK START", cx+36, card2Y+12, 120, 18, C_MUTED);
+        SelectObject(dc, fBody);
+        DrawText_(dc, L"1.  Run PocketDisplay.exe on your PC",
+                  cx+36, card2Y+36, cw-80, 20, C_TEXT);
+        DrawText_(dc, L"2.  Open the PocketDisplay app on your Android device",
+                  cx+36, card2Y+62, cw-80, 20, C_TEXT);
+        DrawText_(dc, L"3.  Choose a display mode (Mirror or Extended)",
+                  cx+36, card2Y+88, cw-80, 20, C_TEXT);
+        DrawText_(dc, L"4.  Connect",
+                  cx+36, card2Y+114, cw-80, 20, C_TEXT);
+
+        DeleteObject(fLabel); DeleteObject(fVal); DeleteObject(fBody);
         break;
     }
     }
@@ -400,7 +401,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
     case WM_LBUTTONDOWN: {
         int mx = LOWORD(lp), my = HIWORD(lp);
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 2; ++i) {
             int iy = 68 + i * 44;
             if (mx < SIDEBAR_W && my >= iy && my < iy + 40) {
                 g_page = i;

@@ -1,5 +1,6 @@
 package com.pocketdisplay.app
 
+import android.graphics.Color
 import android.graphics.SurfaceTexture
 import android.os.Bundle
 import android.os.Handler
@@ -127,10 +128,12 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         binding.navAbout.setOnClickListener {
             binding.panelDashboard.visibility = View.GONE
             binding.panelAbout.visibility = View.VISIBLE
+            setActiveNav(binding.navAbout)
         }
         binding.navDashboard.setOnClickListener {
             binding.panelAbout.visibility = View.GONE
             binding.panelDashboard.visibility = View.VISIBLE
+            setActiveNav(binding.navDashboard)
         }
         binding.hudDisconnect.setOnClickListener { cm.userDisconnect() }
         binding.hudKeyboard.setOnClickListener { toggleKeyboard() }
@@ -178,6 +181,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         cm.onNeedModeDialog = { hostLabel -> runOnUiThread { showModeDialog(hostLabel) } }
         cm.onVideoDimensions = { w, h ->
             videoW = w; videoH = h
+            transformLogged = false
             runOnUiThread {
                 binding.textureView.surfaceTexture?.setDefaultBufferSize(w, h)
                 scheduleApplyFillTransform()
@@ -192,12 +196,17 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
             }
         }
         cm.onCursorPos = { nx, ny, type ->
-            val vw = if (videoScaledW > 0f) videoScaledW else binding.textureView.width.toFloat()
-            val vh = if (videoScaledH > 0f) videoScaledH else binding.textureView.height.toFloat()
-            if (vw > 0f && vh > 0f) {
-                val sx = videoOffsetX + nx * vw
-                val sy = videoOffsetY + ny * vh
-                runOnUiThread { binding.cursorOverlay.moveTo(sx, sy, type) }
+            if (type == 0xFF) {
+                // Sentinel: PC cursor left the extended display region — hide overlay.
+                runOnUiThread { binding.cursorOverlay.hide() }
+            } else {
+                val vw = if (videoScaledW > 0f) videoScaledW else binding.textureView.width.toFloat()
+                val vh = if (videoScaledH > 0f) videoScaledH else binding.textureView.height.toFloat()
+                if (vw > 0f && vh > 0f) {
+                    val sx = videoOffsetX + nx * vw
+                    val sy = videoOffsetY + ny * vh
+                    runOnUiThread { binding.cursorOverlay.moveTo(sx, sy, type) }
+                }
             }
         }
         cm.onFirstFrame = {
@@ -214,6 +223,25 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
                 val vis = if (extended) View.VISIBLE else View.GONE
                 binding.tvExtendedBadge.visibility = vis
                 binding.hudExtBadge.visibility     = vis
+            }
+        }
+    }
+
+    // ── Navigation highlight ──────────────────────────────────────────────────
+
+    private fun setActiveNav(active: android.widget.LinearLayout) {
+        val navItems = listOf(binding.navDashboard, binding.navAbout)
+        for (nav in navItems) {
+            val accentBar = nav.getChildAt(0)
+            val label = nav.getChildAt(2) as android.widget.TextView
+            if (nav === active) {
+                nav.setBackgroundColor(Color.parseColor("#33FF3B30"))
+                accentBar.visibility = View.VISIBLE
+                label.setTextColor(Color.parseColor("#FFFF3B30"))
+            } else {
+                nav.setBackgroundColor(Color.TRANSPARENT)
+                accentBar.visibility = View.INVISIBLE
+                label.setTextColor(Color.parseColor("#FFAAAAAA"))
             }
         }
     }
@@ -258,9 +286,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     }
 
     private fun showStreamingUi() {
-        // DXGI desktop capture is always upside-down; pre-apply the 180° rotation.
         binding.textureView.animate().cancel()
-        binding.textureView.rotation = 180f
         binding.textureView.alpha = 0f
         videoShowPending = true
         binding.homePanel.visibility = View.GONE
@@ -283,12 +309,13 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     // ── Video transform ──────────────────────────────────────────────────────
 
     private fun applyFillTransform() {
-        val bufW = videoW.toFloat()
-        val bufH = videoH.toFloat()
+        // Use actual decoded buffer dims; fall back to stream-info dims before the decoder
+        // reports INFO_OUTPUT_FORMAT_CHANGED so the transform can be applied early.
+        val bufW = (if (videoW > 0) videoW else windowsW).toFloat()
+        val bufH = (if (videoH > 0) videoH else windowsH).toFloat()
         val vw = binding.textureView.width.toFloat()
         val vh = binding.textureView.height.toFloat()
 
-        // Log every attempt so we can see which guard fires.
         if (!transformLogged) {
             Log.d(TAG, "=== applyFillTransform attempt ===")
             Log.d(TAG, "  TextureView : ${vw.toInt()} x ${vh.toInt()}")
@@ -298,14 +325,12 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         if (bufW == 0f || bufH == 0f) return
         if (vw == 0f || vh == 0f) return
 
-        // Same contain math for cursor overlay (Windows norm → view); use logical desktop
-        // size when known so cursor matches GetCursorPos, even if the encoded frame is padded.
-        val contentW = if (windowsW > 0) windowsW.toFloat() else bufW
-        val contentH = if (windowsH > 0) windowsH.toFloat() else bufH
-        val scale = minOf(vw / contentW, vh / contentH)
+        // Letterbox-fit (contain): scale = min(viewW/bufW, viewH/bufH), then center.
+        // Uses min() so the whole frame is always visible with correct aspect ratio.
+        val scale = minOf(vw / bufW, vh / bufH)
         // Snap to integer pixels — fractional coordinates cause bilinear sub-pixel ghosting.
-        val scaledW = kotlin.math.round(contentW * scale).toFloat()
-        val scaledH = kotlin.math.round(contentH * scale).toFloat()
+        val scaledW = kotlin.math.round(bufW * scale).toFloat()
+        val scaledH = kotlin.math.round(bufH * scale).toFloat()
         val offsetX = kotlin.math.round((vw - scaledW) / 2f).toFloat()
         val offsetY = kotlin.math.round((vh - scaledH) / 2f).toFloat()
 
@@ -319,7 +344,6 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         binding.textureView.scaleX = scaledW / vw
         binding.textureView.scaleY = scaledH / vh
         binding.textureView.setTransform(null)
-        binding.textureView.rotation = 180f
 
         if (!transformLogged) {
             transformLogged = true
@@ -505,15 +529,17 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         if (vw == 0f || vh == 0f) return Pair(0f, 0f)
         val x = ((tx - videoOffsetX) / vw).coerceIn(0f, 1f)
         val y = ((ty - videoOffsetY) / vh).coerceIn(0f, 1f)
-        // TextureView is rotated 180°; invert both axes so Windows coords are correct.
-        return Pair(1f - x, 1f - y)
+        // rotation=180° corrects the OpenGL y-flip from MediaCodec; touch events carry
+        // raw screen coords (the visual rotation does NOT invert event.x/y), so
+        // physical top = Windows TOP — no axis inversion needed.
+        return Pair(x, y)
     }
 
     private fun toScreenPosition(nx: Float, ny: Float): Pair<Float, Float> {
         val vw = if (videoScaledW > 0f) videoScaledW else binding.textureView.width.toFloat()
         val vh = if (videoScaledH > 0f) videoScaledH else binding.textureView.height.toFloat()
         // Inverse of toNormalized: map Windows-normalized coords back to physical screen pixels.
-        return Pair(videoOffsetX + (1f - nx) * vw, videoOffsetY + (1f - ny) * vh)
+        return Pair(videoOffsetX + nx * vw, videoOffsetY + ny * vh)
     }
 
     private fun moveCursorTo(p: Pair<Float, Float>) =
