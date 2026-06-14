@@ -281,9 +281,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     }
 
     private fun showStreamingUi() {
-        // DXGI desktop capture is always upside-down; pre-apply the 180° rotation.
         binding.textureView.animate().cancel()
-        binding.textureView.rotation = 180f
         binding.textureView.alpha = 0f
         videoShowPending = true
         binding.homePanel.visibility = View.GONE
@@ -341,7 +339,6 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         binding.textureView.scaleX = scaledW / vw
         binding.textureView.scaleY = scaledH / vh
         binding.textureView.setTransform(null)
-        binding.textureView.rotation = 180f
 
         if (!transformLogged) {
             transformLogged = true
