@@ -1,5 +1,6 @@
 package com.pocketdisplay.app
 
+import android.graphics.Color
 import android.graphics.SurfaceTexture
 import android.os.Bundle
 import android.os.Handler
@@ -127,11 +128,15 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         binding.navAbout.setOnClickListener {
             binding.panelDashboard.visibility = View.GONE
             binding.panelAbout.visibility = View.VISIBLE
+            setActiveNav(binding.navAbout)
         }
         binding.navDashboard.setOnClickListener {
             binding.panelAbout.visibility = View.GONE
             binding.panelDashboard.visibility = View.VISIBLE
+            setActiveNav(binding.navDashboard)
         }
+        binding.navConnection.setOnClickListener { setActiveNav(binding.navConnection) }
+        binding.navSettings.setOnClickListener { setActiveNav(binding.navSettings) }
         binding.hudDisconnect.setOnClickListener { cm.userDisconnect() }
         binding.hudKeyboard.setOnClickListener { toggleKeyboard() }
         binding.btnModeToggle.setOnClickListener {
@@ -214,6 +219,25 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
                 val vis = if (extended) View.VISIBLE else View.GONE
                 binding.tvExtendedBadge.visibility = vis
                 binding.hudExtBadge.visibility     = vis
+            }
+        }
+    }
+
+    // ── Navigation highlight ──────────────────────────────────────────────────
+
+    private fun setActiveNav(active: android.widget.LinearLayout) {
+        val navItems = listOf(binding.navDashboard, binding.navConnection, binding.navSettings, binding.navAbout)
+        for (nav in navItems) {
+            val accentBar = nav.getChildAt(0)
+            val label = nav.getChildAt(2) as android.widget.TextView
+            if (nav === active) {
+                nav.setBackgroundColor(Color.parseColor("#33FF3B30"))
+                accentBar.visibility = View.VISIBLE
+                label.setTextColor(Color.parseColor("#FFFF3B30"))
+            } else {
+                nav.setBackgroundColor(Color.TRANSPARENT)
+                accentBar.visibility = View.INVISIBLE
+                label.setTextColor(Color.parseColor("#FFAAAAAA"))
             }
         }
     }
