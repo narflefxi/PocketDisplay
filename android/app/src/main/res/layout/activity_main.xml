@@ -201,60 +201,6 @@
                     android:layout_marginStart="10dp" />
             </LinearLayout>
 
-            <!-- Nav: Connection -->
-            <LinearLayout
-                android:id="@+id/navConnection"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:paddingStart="20dp">
-                <View
-                    android:layout_width="3dp"
-                    android:layout_height="28dp"
-                    android:background="#FF3B30"
-                    android:layout_marginEnd="14dp"
-                    android:visibility="invisible" />
-                <ImageView
-                    android:layout_width="20dp"
-                    android:layout_height="20dp"
-                    android:src="@drawable/ic_nav_devices" />
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Connection"
-                    android:textColor="#AAAAAA"
-                    android:textSize="13sp"
-                    android:layout_marginStart="10dp" />
-            </LinearLayout>
-
-            <!-- Nav: Settings -->
-            <LinearLayout
-                android:id="@+id/navSettings"
-                android:layout_width="match_parent"
-                android:layout_height="48dp"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:paddingStart="20dp">
-                <View
-                    android:layout_width="3dp"
-                    android:layout_height="28dp"
-                    android:background="#FF3B30"
-                    android:layout_marginEnd="14dp"
-                    android:visibility="invisible" />
-                <ImageView
-                    android:layout_width="20dp"
-                    android:layout_height="20dp"
-                    android:src="@drawable/ic_nav_settings" />
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Settings"
-                    android:textColor="#AAAAAA"
-                    android:textSize="13sp"
-                    android:layout_marginStart="10dp" />
-            </LinearLayout>
-
             <!-- Nav: About -->
             <LinearLayout
                 android:id="@+id/navAbout"
@@ -472,14 +418,39 @@
                 android:textStyle="bold"
                 android:layout_marginBottom="24dp" />
 
-            <ImageView
-                android:layout_width="160dp"
+            <!-- Section 1: App name + version -->
+            <androidx.cardview.widget.CardView
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:src="@drawable/logo_primary"
-                android:scaleType="fitStart"
-                android:adjustViewBounds="true"
-                android:layout_marginBottom="24dp" />
+                app:cardCornerRadius="12dp"
+                app:cardElevation="2dp"
+                app:cardBackgroundColor="@color/colorCardBg"
+                android:layout_marginBottom="16dp">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="16dp">
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="PocketDisplay v1.0"
+                        android:textColor="@color/colorDark"
+                        android:textSize="18sp"
+                        android:fontFamily="@font/space_grotesk_medium"
+                        android:textStyle="bold" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Turn your Android into a wireless second display for Windows"
+                        android:textColor="@color/colorMedium"
+                        android:textSize="13sp"
+                        android:layout_marginTop="6dp"
+                        android:lineSpacingExtra="3dp" />
+                </LinearLayout>
+            </androidx.cardview.widget.CardView>
 
+            <!-- Section 3: Quick start -->
             <androidx.cardview.widget.CardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -494,44 +465,38 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="PocketDisplay"
-                        android:textColor="@color/colorDark"
-                        android:textSize="16sp"
-                        android:fontFamily="@font/space_grotesk_medium"
-                        android:textStyle="bold" />
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Version 0.1.0"
+                        android:text="QUICK START"
                         android:textColor="@color/colorLight"
-                        android:textSize="12sp"
-                        android:layout_marginTop="2dp" />
-                    <View
-                        android:layout_width="match_parent"
-                        android:layout_height="1dp"
-                        android:background="@color/colorDivider"
-                        android:layout_marginTop="12dp"
-                        android:layout_marginBottom="12dp" />
+                        android:textSize="10sp"
+                        android:letterSpacing="0.1"
+                        android:layout_marginBottom="10dp" />
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Use your Android phone as a wireless or USB secondary display for Windows — with touch input, cursor overlay, and Mirror/Extended desktop modes."
+                        android:text="1.  Run PocketDisplay.exe on your PC"
                         android:textColor="@color/colorMedium"
                         android:textSize="13sp"
-                        android:lineSpacingExtra="3dp" />
-                    <View
-                        android:layout_width="match_parent"
-                        android:layout_height="1dp"
-                        android:background="@color/colorDivider"
-                        android:layout_marginTop="12dp"
-                        android:layout_marginBottom="12dp" />
+                        android:layout_marginBottom="6dp" />
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="github.com/narflefxi/PocketDisplay"
-                        android:textColor="@color/colorPrimary"
-                        android:textSize="12sp"
-                        android:fontFamily="monospace" />
+                        android:text="2.  Open the PocketDisplay app on your Android device"
+                        android:textColor="@color/colorMedium"
+                        android:textSize="13sp"
+                        android:layout_marginBottom="6dp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="3.  Choose a display mode (Mirror or Extended)"
+                        android:textColor="@color/colorMedium"
+                        android:textSize="13sp"
+                        android:layout_marginBottom="6dp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="4.  Connect"
+                        android:textColor="@color/colorMedium"
+                        android:textSize="13sp" />
                 </LinearLayout>
             </androidx.cardview.widget.CardView>
 

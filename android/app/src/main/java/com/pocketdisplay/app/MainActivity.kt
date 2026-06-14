@@ -135,8 +135,6 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
             binding.panelDashboard.visibility = View.VISIBLE
             setActiveNav(binding.navDashboard)
         }
-        binding.navConnection.setOnClickListener { setActiveNav(binding.navConnection) }
-        binding.navSettings.setOnClickListener { setActiveNav(binding.navSettings) }
         binding.hudDisconnect.setOnClickListener { cm.userDisconnect() }
         binding.hudKeyboard.setOnClickListener { toggleKeyboard() }
         binding.btnModeToggle.setOnClickListener {
@@ -226,7 +224,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     // ── Navigation highlight ──────────────────────────────────────────────────
 
     private fun setActiveNav(active: android.widget.LinearLayout) {
-        val navItems = listOf(binding.navDashboard, binding.navConnection, binding.navSettings, binding.navAbout)
+        val navItems = listOf(binding.navDashboard, binding.navAbout)
         for (nav in navItems) {
             val accentBar = nav.getChildAt(0)
             val label = nav.getChildAt(2) as android.widget.TextView
