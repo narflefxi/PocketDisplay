@@ -366,10 +366,14 @@ int main(int argc, char* argv[]) {
             strncpy_s(g_gui.setupMsg, "USB setup complete: adb reverse ready", 255);
             SetColor(GREEN); std::cout << "[USB] adb reverse OK.\n"; ResetColor();
             Sleep(500);
-            StartUsbMonitorThread(port, touch_port, g_running);
         }
     }
     strncpy_s(g_gui.mode, (usb_device_present && usb_adb_ready) ? "USB" : "WiFi", 31);
+
+    // Always-on USB presence monitor — runs regardless of startup transport.
+    // Detects USB plug-in during a WiFi session and runs adb reverse so the
+    // Android probe can reach Windows on 127.0.0.1:7777 (enables WiFi→USB hot-switch).
+    StartUsbMonitorThread(port, touch_port, g_running);
 
     // â”€â”€ Always-on HELLO server â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     TcpVideoServer hello_server;

@@ -76,7 +76,7 @@ open class TouchSender(
                         Log.i("PocketDisplay", "[DBG#16] Touch TCP connect attempt #$attempt -> $targetIp:$port")
                         s = Socket()
                         s.tcpNoDelay = true
-                        s.connect(addr, 600)
+                        s.connect(addr, 200)
                         // Probe write detects phantom adb-reverse connections (PC port not
                         // yet open).  SCROLL(0,0) is a no-op on Windows.
                         Log.i("PocketDisplay", "[DBG#16] Touch TCP connected, probing attempt #$attempt")
@@ -93,7 +93,7 @@ open class TouchSender(
                     } catch (e: Exception) {
                         Log.d("PocketDisplay", "[DBG#16] Touch TCP attempt #$attempt failed: ${e.message}")
                         try { s?.close() } catch (_: Exception) {}
-                        try { Thread.sleep(200) } catch (_: InterruptedException) { break }
+                        try { Thread.sleep(50) } catch (_: InterruptedException) { break }
                     }
                 }
                 Log.i("PocketDisplay", "[DBG#16] TouchSender connect thread exiting (closed=$closed)")

@@ -122,7 +122,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         setupConnectionManager()
 
         binding.btnConnect.setOnClickListener {
-            if (cm.isSessionActive) cm.stopCurrentSession() else cm.retryConnect()
+            if (cm.isSessionActive) cm.userDisconnect() else cm.retryConnect()
         }
         binding.navAbout.setOnClickListener {
             binding.panelDashboard.visibility = View.GONE
@@ -132,7 +132,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
             binding.panelAbout.visibility = View.GONE
             binding.panelDashboard.visibility = View.VISIBLE
         }
-        binding.hudDisconnect.setOnClickListener { cm.stopCurrentSession() }
+        binding.hudDisconnect.setOnClickListener { cm.userDisconnect() }
         binding.hudKeyboard.setOnClickListener { toggleKeyboard() }
         binding.btnModeToggle.setOnClickListener {
             cm.toggleDisplayMode()

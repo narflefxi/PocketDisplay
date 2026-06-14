@@ -49,6 +49,8 @@ class ConnectionManager(private val context: Context) {
     private enum class Transport { NONE, USB, WIFI }
 
     @Volatile private var currentTransport = Transport.NONE
+    @Volatile private var destroyed = false
+    @Volatile private var userDisconnected = false
 
     private var surface: Surface? = null
     private var screenW = 0
@@ -95,7 +97,7 @@ class ConnectionManager(private val context: Context) {
 
     private val fallbackPollRunnable = object : Runnable {
         override fun run() {
-            if (receiver == null && surface != null) {
+            if (!userDisconnected && receiver == null && surface != null) {
                 Log.d(TAG, "[CM] Fallback poll: probing…")
                 Thread { tryConnect() }.start()
             }
@@ -114,7 +116,7 @@ class ConnectionManager(private val context: Context) {
         this.screenW = w
         this.screenH = h
         Log.i(TAG, "[CM] Surface available ${w}x${h}")
-        Thread { tryConnect() }.start()
+        if (!userDisconnected) Thread { tryConnect() }.start()
     }
 
     fun onSurfaceDestroyed() {
@@ -130,7 +132,7 @@ class ConnectionManager(private val context: Context) {
             usbReceiverRegistered = true
             Log.d(TAG, "[CM] USB BroadcastReceiver registered")
         }
-        if (receiver == null && surface != null) {
+        if (!userDisconnected && receiver == null && surface != null) {
             Thread { tryConnect() }.start()
         }
         mainHandler.removeCallbacks(fallbackPollRunnable)
@@ -143,6 +145,7 @@ class ConnectionManager(private val context: Context) {
 
     fun destroy() {
         Log.i(TAG, "[CM] destroy()")
+        destroyed = true
         mainHandler.removeCallbacks(fallbackPollRunnable)
         codecAckRunnable?.let { mainHandler.removeCallbacks(it) }
         if (usbReceiverRegistered) {
@@ -158,7 +161,7 @@ class ConnectionManager(private val context: Context) {
     private fun tryConnect() {
         val usbOk = probeHost("127.0.0.1")
         mainHandler.post {
-            if (receiver != null || surface == null) return@post
+            if (receiver != null || surface == null || userDisconnected) return@post
             if (usbOk) {
                 Log.i(TAG, "[CM] USB reachable — starting USB session")
                 startUsbSession()
@@ -177,16 +180,38 @@ class ConnectionManager(private val context: Context) {
 
     /** Public entry point for manual retries (e.g. Connect button). */
     fun retryConnect() {
+        userDisconnected = false
         if (receiver != null || surface == null) return
         Thread { tryConnect() }.start()
     }
 
+    /** Called when the user explicitly presses Disconnect. Suppresses all auto-reconnect
+     *  until the user presses Connect again (which calls retryConnect()). */
+    fun userDisconnect() {
+        Log.i(TAG, "[CM] User requested disconnect — suppressing auto-reconnect")
+        userDisconnected = true
+        stopCurrentSession()
+    }
+
     private fun onUsbConnected() {
-        Log.i(TAG, "[CM] USB attached — probing…")
+        Log.i(TAG, "[CM] USB attached — probing (will retry up to 5 s)…")
         Thread {
-            val usbOk = probeHost("127.0.0.1")
+            var usbOk = false
+            val deadline = System.currentTimeMillis() + 5_000L
+            var attempt = 0
+            while (!usbOk && System.currentTimeMillis() < deadline) {
+                attempt++
+                usbOk = probeHost("127.0.0.1")
+                Log.i(TAG, "[CM] USB probe attempt $attempt: ${if (usbOk) "reachable" else "not reachable"}")
+                if (!usbOk && System.currentTimeMillis() < deadline) {
+                    try { Thread.sleep(1_000) } catch (_: InterruptedException) { break }
+                }
+            }
             mainHandler.post {
-                if (!usbOk || surface == null) return@post
+                if (!usbOk || surface == null || userDisconnected) {
+                    if (!usbOk) Log.i(TAG, "[CM] USB probe failed after $attempt attempt(s) — staying on current transport")
+                    return@post
+                }
                 if (currentTransport != Transport.USB) {
                     Log.i(TAG, "[CM] USB reachable after attach — switching to USB")
                     stopCurrentSession()
@@ -201,7 +226,7 @@ class ConnectionManager(private val context: Context) {
             Log.i(TAG, "[CM] USB detached")
             if (currentTransport == Transport.USB) {
                 stopCurrentSession()
-                startWifiDiscovery()
+                if (!userDisconnected) startWifiDiscovery()
             }
         }
     }
@@ -238,9 +263,9 @@ class ConnectionManager(private val context: Context) {
     }
 
     private fun startWifiDiscovery() {
+        onTransport?.invoke("Wi-Fi")  // Always update label, even if discovery is already running
         if (discoverClient?.isRunning == true) return
         Log.i(TAG, "[CM] Starting WiFi discovery")
-        onTransport?.invoke("Wi-Fi")
         onStatus?.invoke("Searching for PocketDisplay host…")
 
         discoverClient?.stop()
@@ -249,7 +274,7 @@ class ConnectionManager(private val context: Context) {
             mainHandler.post {
                 discoverClient?.stop()
                 discoverClient = null
-                if (receiver == null && surface != null) {
+                if (!userDisconnected && receiver == null && surface != null) {
                     Log.i(TAG, "[CM] Host discovered: $hostIp")
                     startWifiSession(hostIp)
                 }
@@ -297,12 +322,20 @@ class ConnectionManager(private val context: Context) {
         onConnected?.invoke(false)
         onExtendedBadge?.invoke(false)
         onStatus?.invoke("Disconnected")
-        onTransport?.invoke("—")
+        // Transport label intentionally NOT reset — keeps last-known transport visible on dashboard.
+        // Trigger an immediate reconnect attempt instead of waiting for the 10 s fallback poll.
+        mainHandler.post {
+            if (!destroyed && !userDisconnected && receiver == null && surface != null) Thread { tryConnect() }.start()
+        }
     }
 
     // ── Session event handlers ─────────────────────────────────────────────────
 
     private fun onSenderIpReceived(ip: String) {
+        // Re-confirm transport label on every TCP stream connect (covers reconnects and edge cases).
+        if (currentTransport != Transport.NONE)
+            onTransport?.invoke(if (currentTransport == Transport.USB) "USB" else "Wi-Fi")
+
         if (touchSender != null) return  // already created (auto-reconnect within same session)
         val touchHost = if (currentTransport == Transport.USB) "127.0.0.1" else ip
         Log.i(TAG, "[CM] Creating TouchSender → $touchHost:$TOUCH_PORT")

@@ -31,7 +31,6 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 - android/.../ConnectionManager.kt — connection state machine (USB/WiFi lifecycle, mode persistence)
 - android/.../TcpStreamReceiver.kt — TCP video client (host param; works for both USB and WiFi)
 - android/.../TouchSender.kt — TCP-only touch/ACK sender
-- android/.../TcpTouchSender.kt — thin subclass of TouchSender for USB
 - android/.../MainActivity.kt — UI only; delegates all connection logic to ConnectionManager
 - android/.../VideoDecoder.kt — MediaCodec H.264 decoder
 
@@ -49,6 +48,7 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 - Auto-reconnect: working (session-based; no process restart required)
 - Mode switching without restart: working (new HELLO tears down old Session, starts new one)
 - Wireless adb + USB adb coexist: working (adb reverse uses -s <serial> to avoid multi-device error)
+- WiFi→USB hot-switch: working (Phase 4b — always-on USB monitor + Android probe retry)
 
 ## Known Issues (Open)
 - #20: First-time setup requires too many manual steps (bug)
@@ -58,6 +58,21 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 - #1: Cursor position mismatch on Android (touch vs mouse) (bug)
 
 ## Recently Fixed
+- Phase 4f: Disconnect button regression fix ✅
+  - Root cause (regression from 4e): stopCurrentSession() always triggered an immediate tryConnect() (added in 4e for fast involuntary reconnect). Since both the Disconnect button and internal hot-switch paths called stopCurrentSession(), manual disconnect instantly auto-reconnected.
+  - Fix: introduced @Volatile userDisconnected flag in ConnectionManager. Manual disconnect (Disconnect button / HUD Disconnect) calls the new userDisconnect() which sets userDisconnected=true before calling stopCurrentSession(). retryConnect() (Connect button) clears the flag. All 8 auto-reconnect paths are guarded: stopCurrentSession() immediate trigger, fallbackPollRunnable, onUsbConnected() probe, startWifiDiscovery() callback, tryConnect() main-thread post, onResume(), onSurfaceAvailable(), and onUsbDisconnected()→startWifiDiscovery().
+  - Distinction: ONLY userDisconnect() sets the flag. Internal hot-switch paths (onUsbConnected, onUsbDisconnected, surface lifecycle) call stopCurrentSession() directly and do NOT set the flag, so involuntary drops still auto-recover as before.
+  - Changed files: android/.../ConnectionManager.kt, android/.../MainActivity.kt
+- Phase 4e: Connection Mode label (actual fix) + reconnect speed (actual fix) ✅
+  - Label fix (Issue 1) — root cause: stopCurrentSession() called onTransport("—") on every session end, always resetting the dashboard label to "—". Since tvConnectionMode is inside homePanel (only visible when NOT streaming), the user only ever saw "—" (after disconnect) or briefly "USB"/"Wi-Fi" during the <500ms connecting window before showStreamingUi() hid homePanel. The previous attempt (re-emitting onTransport in onSenderIpReceived) fired during connect, but homePanel hid immediately after. Real fix: removed onTransport("—") from stopCurrentSession() — label now retains last-known transport ("USB" or "Wi-Fi") while on the dashboard. Changed file: android/.../ConnectionManager.kt
+  - Reconnect speed (Issue 2) — root cause: after stopCurrentSession(), the ONLY automatic reconnect trigger was fallbackPollRunnable (10s interval), causing 0–10s random wait before any reconnect attempt. Touch socket timing (300ms+100ms=400ms/attempt) was not the primary bottleneck. Real fix: added immediate mainHandler.post { Thread { tryConnect() }.start() } at the end of stopCurrentSession(), guarded by !destroyed && receiver==null && surface!=null. Also added @Volatile destroyed flag (set in destroy() before stopCurrentSession()) to prevent spurious reconnect on app exit. onSurfaceDestroyed() already sets surface=null before calling stopCurrentSession(), so that guard also fires correctly. Touch retry further tightened: 200ms+50ms=250ms/attempt. Changed files: android/.../ConnectionManager.kt, android/.../TouchSender.kt
+  - Codec-config spam (Item 3 from prior session): Session::ResendLoop sent stream_info + codec_config unconditionally every 2s, causing continuous "Codec config received" log noise on Android even mid-stream. Added !android_ready_.load() guard so resending stops once ACK is received; automatically resumes when android_ready_ is reset (encoder re-init on resolution change, or new Session from reconnect). Changed file: windows/src/Session.cpp
+- Phase 4b: WiFi→USB hot-switch + Connection Mode label ✅
+  - Root cause: StartUsbMonitorThread was only started when USB was present at app launch. Starting in WiFi mode meant no USB monitor ran, so adb reverse was never set up when a cable was plugged mid-session. Android probed 127.0.0.1:7777 once, failed silently, gave up.
+  - Windows fix: StartUsbMonitorThread now called unconditionally after startup (main.cpp), regardless of whether USB was present at launch. Monitor detects absent→present USB transition and runs RunAdbUsbReverse(-s <serial> tcp:7777 + tcp:7778) without touching the active WiFi session.
+  - Android fix: onUsbConnected() now retries probeHost("127.0.0.1") every 1 s for up to 5 s (instead of one-shot), catching the window while Windows sets up adb reverse. Each attempt is logged. On success: stopCurrentSession() + startUsbSession() with saved mode (no dialog).
+  - Label fix: startWifiDiscovery() now fires onTransport("Wi-Fi") before the early-return guard, ensuring the Connection Mode label always updates to "Wi-Fi" even when discovery was already running.
+  - Changed files: windows/src/main.cpp, android/.../ConnectionManager.kt
 - #19: Auto-switch USB/WiFi — UsbManager detection on startup + BroadcastReceiver for plug/unplug ✅
   - Follow-up: Fixed black screen/reconnect loop on WiFi→USB switch — race condition where old WiFi StreamReceiver threads were still alive when TcpStreamReceiver started. Fix: explicit stopReceiver() + 600ms postDelayed before setMode(true)+autoStartIfNeeded(). Also added reverse USB→WiFi auto-detection (probe failure → same stop+delay+setMode pattern). ✅
   - Bug 1: Fixed adb reverse lost after USB reconnect — added StartUsbMonitorThread() in AdbUsbSetup.cpp that polls DetectUsbDevice() every 3s and re-runs RunAdbUsbReverse() on device absent→present transition. Started in main.cpp after initial adb reverse. ✅
@@ -141,7 +156,7 @@ All video and touch now flows over TCP for both USB and WiFi modes.
 3. Android connects → sends HELLO; AcceptLoop fires hello_cb_ (hands off SOCKET)
 4. Session::Start() → ScreenCapture + encoder init; touch receiver on :7778 (TCP)
 5. ResendLoop sends stream_info + codec_config every 2s
-6. Android TcpTouchSender connects → ACK received → android_ready=true → frames flow
+6. Android TouchSender connects → ACK received → android_ready=true → frames flow
 7. On disconnect: StreamLoop fails → running_=false → main tears down session; loops back to 2
 
 ## Connection Flow (WiFi — Phase 3)

@@ -170,11 +170,13 @@ void Session::WriteCrashLog(const std::string& msg) {
     }
 }
 
-// ── Resend loop (codec config + stream info every 2 s) ───────────────────────
+// ── Resend loop (codec config + stream info until ACK; resumes on reconnect) ─
 
 void Session::ResendLoop() {
     while (running_.load()) {
-        if (cfg_.streamer) {
+        // Stop resending once android_ready (ACK received). Resume if android_ready
+        // is reset (encoder re-init on resolution change, or new session from reconnect).
+        if (cfg_.streamer && !android_ready_.load()) {
             uint8_t dims[12];
             const uint32_t sw = htonl(static_cast<uint32_t>(stream_w_.load()));
             const uint32_t sh = htonl(static_cast<uint32_t>(stream_h_.load()));
