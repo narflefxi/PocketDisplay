@@ -181,6 +181,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         cm.onNeedModeDialog = { hostLabel -> runOnUiThread { showModeDialog(hostLabel) } }
         cm.onVideoDimensions = { w, h ->
             videoW = w; videoH = h
+            transformLogged = false
             runOnUiThread {
                 binding.textureView.surfaceTexture?.setDefaultBufferSize(w, h)
                 scheduleApplyFillTransform()
@@ -305,12 +306,13 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     // ── Video transform ──────────────────────────────────────────────────────
 
     private fun applyFillTransform() {
-        val bufW = videoW.toFloat()
-        val bufH = videoH.toFloat()
+        // Use actual decoded buffer dims; fall back to stream-info dims before the decoder
+        // reports INFO_OUTPUT_FORMAT_CHANGED so the transform can be applied early.
+        val bufW = (if (videoW > 0) videoW else windowsW).toFloat()
+        val bufH = (if (videoH > 0) videoH else windowsH).toFloat()
         val vw = binding.textureView.width.toFloat()
         val vh = binding.textureView.height.toFloat()
 
-        // Log every attempt so we can see which guard fires.
         if (!transformLogged) {
             Log.d(TAG, "=== applyFillTransform attempt ===")
             Log.d(TAG, "  TextureView : ${vw.toInt()} x ${vh.toInt()}")
@@ -320,14 +322,12 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         if (bufW == 0f || bufH == 0f) return
         if (vw == 0f || vh == 0f) return
 
-        // Same contain math for cursor overlay (Windows norm → view); use logical desktop
-        // size when known so cursor matches GetCursorPos, even if the encoded frame is padded.
-        val contentW = if (windowsW > 0) windowsW.toFloat() else bufW
-        val contentH = if (windowsH > 0) windowsH.toFloat() else bufH
-        val scale = minOf(vw / contentW, vh / contentH)
+        // Letterbox-fit (contain): scale = min(viewW/bufW, viewH/bufH), then center.
+        // Uses min() so the whole frame is always visible with correct aspect ratio.
+        val scale = minOf(vw / bufW, vh / bufH)
         // Snap to integer pixels — fractional coordinates cause bilinear sub-pixel ghosting.
-        val scaledW = kotlin.math.round(contentW * scale).toFloat()
-        val scaledH = kotlin.math.round(contentH * scale).toFloat()
+        val scaledW = kotlin.math.round(bufW * scale).toFloat()
+        val scaledH = kotlin.math.round(bufH * scale).toFloat()
         val offsetX = kotlin.math.round((vw - scaledW) / 2f).toFloat()
         val offsetY = kotlin.math.round((vh - scaledH) / 2f).toFloat()
 
