@@ -527,15 +527,17 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         if (vw == 0f || vh == 0f) return Pair(0f, 0f)
         val x = ((tx - videoOffsetX) / vw).coerceIn(0f, 1f)
         val y = ((ty - videoOffsetY) / vh).coerceIn(0f, 1f)
-        // TextureView is rotated 180°; invert both axes so Windows coords are correct.
-        return Pair(1f - x, 1f - y)
+        // rotation=180° corrects the OpenGL y-flip from MediaCodec; touch events carry
+        // raw screen coords (the visual rotation does NOT invert event.x/y), so
+        // physical top = Windows TOP — no axis inversion needed.
+        return Pair(x, y)
     }
 
     private fun toScreenPosition(nx: Float, ny: Float): Pair<Float, Float> {
         val vw = if (videoScaledW > 0f) videoScaledW else binding.textureView.width.toFloat()
         val vh = if (videoScaledH > 0f) videoScaledH else binding.textureView.height.toFloat()
         // Inverse of toNormalized: map Windows-normalized coords back to physical screen pixels.
-        return Pair(videoOffsetX + (1f - nx) * vw, videoOffsetY + (1f - ny) * vh)
+        return Pair(videoOffsetX + nx * vw, videoOffsetY + ny * vh)
     }
 
     private fun moveCursorTo(p: Pair<Float, Float>) =
