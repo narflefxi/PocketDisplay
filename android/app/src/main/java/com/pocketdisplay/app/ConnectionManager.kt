@@ -49,6 +49,7 @@ class ConnectionManager(private val context: Context) {
     private enum class Transport { NONE, USB, WIFI }
 
     @Volatile private var currentTransport = Transport.NONE
+    @Volatile private var destroyed = false
 
     private var surface: Surface? = null
     private var screenW = 0
@@ -143,6 +144,7 @@ class ConnectionManager(private val context: Context) {
 
     fun destroy() {
         Log.i(TAG, "[CM] destroy()")
+        destroyed = true
         mainHandler.removeCallbacks(fallbackPollRunnable)
         codecAckRunnable?.let { mainHandler.removeCallbacks(it) }
         if (usbReceiverRegistered) {
@@ -310,7 +312,11 @@ class ConnectionManager(private val context: Context) {
         onConnected?.invoke(false)
         onExtendedBadge?.invoke(false)
         onStatus?.invoke("Disconnected")
-        onTransport?.invoke("—")
+        // Transport label intentionally NOT reset — keeps last-known transport visible on dashboard.
+        // Trigger an immediate reconnect attempt instead of waiting for the 10 s fallback poll.
+        mainHandler.post {
+            if (!destroyed && receiver == null && surface != null) Thread { tryConnect() }.start()
+        }
     }
 
     // ── Session event handlers ─────────────────────────────────────────────────
