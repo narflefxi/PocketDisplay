@@ -216,8 +216,9 @@ void Session::CursorLoop() {
     const int  screen_w = GetSystemMetrics(SM_CXSCREEN);
     const int  screen_h = GetSystemMetrics(SM_CYSCREEN);
 
-    POINT   last_pos  = {-1, -1};
-    uint8_t last_type = 0xFF;
+    POINT   last_pos    = {-1, -1};
+    uint8_t last_type   = 0xFF;
+    bool    last_on_mon = true;  // extended mode: tracks on-monitor state for hide-on-leave
 
     while (running_.load()) {
         POINT      pos = {};
@@ -249,17 +250,24 @@ void Session::CursorLoop() {
             if (pos_changed)  last_pos  = pos;
             if (type_changed) last_type = cur_type;
 
-            bool   should_send = true;
-            float  nx = 0.0f, ny = 0.0f;
+            bool    should_send = true;
+            float   nx = 0.0f, ny = 0.0f;
+            uint8_t send_type   = last_type;
             if (extended) {
                 const bool on_mon =
                     last_pos.x >= mon_rect.left && last_pos.x < mon_rect.right &&
                     last_pos.y >= mon_rect.top  && last_pos.y < mon_rect.bottom;
                 if (on_mon) {
+                    last_on_mon = true;
                     const int mw = mon_rect.right  - mon_rect.left;
                     const int mh = mon_rect.bottom - mon_rect.top;
                     nx = static_cast<float>(last_pos.x - mon_rect.left) / mw;
                     ny = static_cast<float>(last_pos.y - mon_rect.top)  / mh;
+                } else if (last_on_mon) {
+                    // Transition: cursor just left extended region — send one hide packet.
+                    last_on_mon = false;
+                    send_type   = pocketdisplay::CURSOR_TYPE_HIDDEN;
+                    // nx, ny remain 0.0f
                 } else {
                     should_send = false;
                 }
@@ -275,7 +283,7 @@ void Session::CursorLoop() {
                 uint8_t payload[9];
                 std::memcpy(payload,     &nx_be, 4);
                 std::memcpy(payload + 4, &ny_be, 4);
-                payload[8] = last_type;
+                payload[8] = send_type;
                 cfg_.streamer->SendFrame(payload, 9, 0, pocketdisplay::FLAG_CURSOR_POS);
             }
         }

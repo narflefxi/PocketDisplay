@@ -196,12 +196,17 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
             }
         }
         cm.onCursorPos = { nx, ny, type ->
-            val vw = if (videoScaledW > 0f) videoScaledW else binding.textureView.width.toFloat()
-            val vh = if (videoScaledH > 0f) videoScaledH else binding.textureView.height.toFloat()
-            if (vw > 0f && vh > 0f) {
-                val sx = videoOffsetX + nx * vw
-                val sy = videoOffsetY + ny * vh
-                runOnUiThread { binding.cursorOverlay.moveTo(sx, sy, type) }
+            if (type == 0xFF) {
+                // Sentinel: PC cursor left the extended display region — hide overlay.
+                runOnUiThread { binding.cursorOverlay.hide() }
+            } else {
+                val vw = if (videoScaledW > 0f) videoScaledW else binding.textureView.width.toFloat()
+                val vh = if (videoScaledH > 0f) videoScaledH else binding.textureView.height.toFloat()
+                if (vw > 0f && vh > 0f) {
+                    val sx = videoOffsetX + nx * vw
+                    val sy = videoOffsetY + ny * vh
+                    runOnUiThread { binding.cursorOverlay.moveTo(sx, sy, type) }
+                }
             }
         }
         cm.onFirstFrame = {
