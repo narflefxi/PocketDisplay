@@ -2,27 +2,12 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
-    android:viewportWidth="490"
-    android:viewportHeight="490">
-    <!-- White fill paths -->
+    android:viewportWidth="330"
+    android:viewportHeight="330">
+    <!-- Horizontal resize cursor from resize_h.svg (CC0). Center hotspot (0.5, 0.5). -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M425.8,228.3L354.7,228.3L354.7,261.7L425.8,261.7L386.2,301.4L409.9,325.1L490,245L409.9,164.9L386.2,188.6z"
-        android:strokeColor="#000000"
-        android:strokeWidth="10" />
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M64.2,261.7L135.3,261.7L135.3,228.3L64.2,228.3L103.8,188.6L80.1,164.9L0,245L80.1,325.1L103.8,301.4z"
-        android:strokeColor="#000000"
-        android:strokeWidth="10" />
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M178.5,0h50.2v490h-50.2z"
-        android:strokeColor="#000000"
-        android:strokeWidth="10" />
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M269.5,0h50.2v490h-50.2z"
+        android:pathData="M79.394,250.606C82.323,253.535,86.161,255,90,255c3.839,0,7.678-1.465,10.606-4.394c5.858-5.857,5.858-15.355,0-21.213L51.213,180h227.574l-49.393,49.394c-5.858,5.857-5.858,15.355,0,21.213C232.322,253.535,236.161,255,240,255s7.678-1.465,10.606-4.394l75-75c5.858-5.857,5.858-15.355,0-21.213l-75-75c-5.857-5.857-15.355-5.857-21.213,0c-5.858,5.857-5.858,15.355,0,21.213L278.787,150H51.213l49.393-49.394c5.858-5.857,5.858-15.355,0-21.213c-5.857-5.857-15.355-5.857-21.213,0l-75,75c-5.858,5.857-5.858,15.355,0,21.213L79.394,250.606z"
         android:strokeColor="#000000"
         android:strokeWidth="10" />
 </vector>

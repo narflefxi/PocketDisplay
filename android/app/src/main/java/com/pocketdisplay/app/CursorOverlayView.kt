@@ -75,13 +75,14 @@ class CursorOverlayView @JvmOverloads constructor(
         // logical click point sits. left = cursorX - hx*w, top = cursorY - hy*h.
         // Drawables now fill their viewport naturally with NO hotspot translate group.
         //   type 0 arrow:      tip at ~(384,213) in 1024x1024 viewport → (0.375, 0.208)
-        //   type 9 hand:       index fingertip at ~x=90,y=22.5 in 203.1x203.1 → (0.443, 0.111)
+        //   type 9 hand:       index fingertip at SVG (146.47, 0) + 34.79 translate
+        //                      → (181.26, 34.79) in 456.16×456.16 viewport → (0.397, 0.076)
         //   all others:        hotspot at center → (0.5, 0.5)
         val hx: Float
         val hy: Float
         when (type) {
             0 -> { hx = 0.375f; hy = 0.208f }
-            9 -> { hx = 0.443f; hy = 0.111f }
+            9 -> { hx = 0.397f; hy = 0.076f }
             else -> { hx = 0.5f; hy = 0.5f }
         }
         val left = (cursorX - hx * w).toInt()
