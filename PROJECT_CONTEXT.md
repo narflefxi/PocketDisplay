@@ -41,14 +41,19 @@ Message types:
 
 ### Android receiver (`android/app/src/main/java/com/pocketdisplay/app/`)
 - `MainActivity.kt`: Uses `DataInputStream.readFully()` for strict framing reads.
-- **Video rendering**: `setTransform(null)` + `textureView.rotation = 180f` — buffer is stretched to fill the full TextureView then rotated 180°. No custom matrix.
-- **Touch → Windows** (`toNormalized`): Direct linear mapping (no axis inversion).
-  `rotation=180f` corrects the OpenGL y-flip from MediaCodec so physical top = Windows TOP.
-  Touch events carry raw screen coords — the visual rotation does NOT invert event.x/y:
+- **Video rendering**: `setTransform(null)` + `scaleX/scaleY` (set in `applyFillTransform`) — buffer stretched to fill the TextureView, then letterbox-fit scale applied from center pivot. DXGI captures upright in Landscape mode; no rotation needed.
+- **Touch → Windows** (`toNormalized`): Divide `event.x/y` by `textureView.width/height`.
+  `applyFillTransform` sets `textureView.scaleX/scaleY` with pivot at center; the parent
+  ConstraintLayout applies the inverse of that transform when dispatching touch events, so
+  `event.x/y` arrive in the TextureView's LOCAL coordinate space.  Due to the symmetric
+  scale-from-center pivot the entire video content maps to `[0, vw] × [0, vh]` in local
+  space — no offset subtraction, no `videoScaledW/H` divisor:
   ```kotlin
-  nx = ((tx - videoOffsetX) / videoScaledW).coerceIn(0f, 1f)
-  ny = ((ty - videoOffsetY) / videoScaledH).coerceIn(0f, 1f)
+  nx = (tx / textureView.width).coerceIn(0f, 1f)
+  ny = (ty / textureView.height).coerceIn(0f, 1f)
   ```
+  Using `videoOffsetX/Y` (screen-space) with local-space `event.x/y` was the bug that
+  caused the cursor to land above the touched point (feature/cursor-fixes).
 - **Touch cursor overlay** (`toScreenPosition`): Inverse of `toNormalized` — overlay appears at finger position:
   ```kotlin
   sx = videoOffsetX + nx * videoScaledW
