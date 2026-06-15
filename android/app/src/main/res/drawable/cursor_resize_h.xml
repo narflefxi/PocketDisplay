@@ -4,32 +4,25 @@
     android:height="24dp"
     android:viewportWidth="490"
     android:viewportHeight="490">
-    <!-- Hotspot at center: center is (245,245) -->
-    <group
-        android:scaleX="0.045"
-        android:scaleY="0.045"
-        android:translateX="-245"
-        android:translateY="-245">
-        <!-- White fill paths -->
-        <path
-            android:fillColor="#FFFFFF"
-            android:pathData="M425.8,228.3L354.7,228.3L354.7,261.7L425.8,261.7L386.2,301.4L409.9,325.1L490,245L409.9,164.9L386.2,188.6z"
-            android:strokeColor="#000000"
-            android:strokeWidth="10" />
-        <path
-            android:fillColor="#FFFFFF"
-            android:pathData="M64.2,261.7L135.3,261.7L135.3,228.3L64.2,228.3L103.8,188.6L80.1,164.9L0,245L80.1,325.1L103.8,301.4z"
-            android:strokeColor="#000000"
-            android:strokeWidth="10" />
-        <path
-            android:fillColor="#FFFFFF"
-            android:pathData="M178.5,0h50.2v490h-50.2z"
-            android:strokeColor="#000000"
-            android:strokeWidth="10" />
-        <path
-            android:fillColor="#FFFFFF"
-            android:pathData="M269.5,0h50.2v490h-50.2z"
-            android:strokeColor="#000000"
-            android:strokeWidth="10" />
-    </group>
+    <!-- White fill paths -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M425.8,228.3L354.7,228.3L354.7,261.7L425.8,261.7L386.2,301.4L409.9,325.1L490,245L409.9,164.9L386.2,188.6z"
+        android:strokeColor="#000000"
+        android:strokeWidth="10" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M64.2,261.7L135.3,261.7L135.3,228.3L64.2,228.3L103.8,188.6L80.1,164.9L0,245L80.1,325.1L103.8,301.4z"
+        android:strokeColor="#000000"
+        android:strokeWidth="10" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M178.5,0h50.2v490h-50.2z"
+        android:strokeColor="#000000"
+        android:strokeWidth="10" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M269.5,0h50.2v490h-50.2z"
+        android:strokeColor="#000000"
+        android:strokeWidth="10" />
 </vector>

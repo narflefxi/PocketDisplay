@@ -4,24 +4,17 @@
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
-    <!-- Hotspot at center: center is (12,12) -->
-    <group
-        android:scaleX="0.9"
-        android:scaleY="0.9"
-        android:translateX="1.2"
-        android:translateY="1.2">
-        <!-- White thick stroke for outline, then black thin stroke -->
-        <path
-            android:pathData="M12,3V9M12,3L9,6M12,3L15,6M12,15V21M12,21L15,18M12,21L9,18M3,12H9M3,12L6,15M3,12L6,9M15,12H21M21,12L18,9M21,12L18,15"
-            android:strokeColor="#FFFFFF"
-            android:strokeWidth="3"
-            android:strokeLineCap="round"
-            android:strokeLineJoin="round" />
-        <path
-            android:pathData="M12,3V9M12,3L9,6M12,3L15,6M12,15V21M12,21L15,18M12,21L9,18M3,12H9M3,12L6,15M3,12L6,9M15,12H21M21,12L18,9M21,12L18,15"
-            android:strokeColor="#000000"
-            android:strokeWidth="1.5"
-            android:strokeLineCap="round"
-            android:strokeLineJoin="round" />
-    </group>
+    <!-- White thick stroke for outline, then black thin stroke -->
+    <path
+        android:pathData="M12,3V9M12,3L9,6M12,3L15,6M12,15V21M12,21L15,18M12,21L9,18M3,12H9M3,12L6,15M3,12L6,9M15,12H21M21,12L18,9M21,12L18,15"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M12,3V9M12,3L9,6M12,3L15,6M12,15V21M12,21L15,18M12,21L9,18M3,12H9M3,12L6,15M3,12L6,9M15,12H21M21,12L18,9M21,12L18,15"
+        android:strokeColor="#000000"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
 </vector>

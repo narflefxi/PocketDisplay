@@ -4,17 +4,10 @@
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
-    <!-- Hotspot at center: no translation needed for centered cursors -->
-    <group
-        android:scaleX="0.9"
-        android:scaleY="0.9"
-        android:translateX="1.2"
-        android:translateY="1.2">
-        <!-- White fill with thick stroke effect: draw white fill first, then black stroke as second path -->
-        <path
-            android:fillColor="#FFFFFF"
-            android:pathData="M12,13h-1.5c-0.28,0-0.5-0.22-0.5-0.5s0.22-0.5,0.5-0.5H12V5.5c0-0.83-0.67-1.5-1.5-1.5h-1c-0.28,0-0.5-0.22-0.5-0.5s0.22-0.5,0.5-0.5h1c0.82,0,1.54,0.39,2,1c0.46-0.61,1.18-1,2-1h1c0.28,0,0.5,0.22,0.5,0.5s-0.22,0.5-0.5,0.5h-1c-0.83,0-1.5,0.67-1.5,1.5v6h1.5c0.28,0,0.5,0.22,0.5,0.5s-0.22,0.5-0.5,0.5H13v6.5c0,0.83,0.67,1.5,1.5,1.5h1c0.28,0,0.5,0.22,0.5,0.5s-0.22,0.5-0.5,0.5h-1c-0.82,0-1.54-0.39-2-1c-0.46,0.61-1.18,1-2,1h-1c-0.28,0-0.5-0.22-0.5-0.5s0.22-0.5,0.5-0.5h1c0.83,0,1.5-0.67,1.5-1.5V13z"
-            android:strokeColor="#000000"
-            android:strokeWidth="0.8" />
-    </group>
+    <!-- White fill with black stroke -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,13h-1.5c-0.28,0-0.5-0.22-0.5-0.5s0.22-0.5,0.5-0.5H12V5.5c0-0.83-0.67-1.5-1.5-1.5h-1c-0.28,0-0.5-0.22-0.5-0.5s0.22-0.5,0.5-0.5h1c0.82,0,1.54,0.39,2,1c0.46-0.61,1.18-1,2-1h1c0.28,0,0.5,0.22,0.5,0.5s-0.22,0.5-0.5,0.5h-1c-0.83,0-1.5,0.67-1.5,1.5v6h1.5c0.28,0,0.5,0.22,0.5,0.5s-0.22,0.5-0.5,0.5H13v6.5c0,0.83,0.67,1.5,1.5,1.5h1c0.28,0,0.5,0.22,0.5,0.5s-0.22,0.5-0.5,0.5h-1c-0.82,0-1.54-0.39-2-1c-0.46,0.61-1.18,1-2,1h-1c-0.28,0-0.5-0.22-0.5-0.5s0.22-0.5,0.5-0.5h1c0.83,0,1.5-0.67,1.5-1.5V13z"
+        android:strokeColor="#000000"
+        android:strokeWidth="0.8" />
 </vector>

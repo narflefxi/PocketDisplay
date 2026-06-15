@@ -71,9 +71,21 @@ class CursorOverlayView @JvmOverloads constructor(
     private fun drawCursorWithHotspot(canvas: Canvas, drawable: Drawable, type: Int) {
         val w = drawable.intrinsicWidth
         val h = drawable.intrinsicHeight
-        val (ox, oy) = if (type == 0 || type == 9) Pair(0, 0) else Pair(w / 2, h / 2)
-        val left = (cursorX - ox).toInt()
-        val top = (cursorY - oy).toInt()
+        // Per-type fractional hotspot (hx, hy): fraction of drawable size where the
+        // logical click point sits. left = cursorX - hx*w, top = cursorY - hy*h.
+        // Drawables now fill their viewport naturally with NO hotspot translate group.
+        //   type 0 arrow:      tip at ~(384,213) in 1024x1024 viewport → (0.375, 0.208)
+        //   type 9 hand:       index fingertip at ~x=90,y=22.5 in 203.1x203.1 → (0.443, 0.111)
+        //   all others:        hotspot at center → (0.5, 0.5)
+        val hx: Float
+        val hy: Float
+        when (type) {
+            0 -> { hx = 0.375f; hy = 0.208f }
+            9 -> { hx = 0.443f; hy = 0.111f }
+            else -> { hx = 0.5f; hy = 0.5f }
+        }
+        val left = (cursorX - hx * w).toInt()
+        val top  = (cursorY - hy * h).toInt()
         drawable.setBounds(left, top, left + w, top + h)
         drawable.draw(canvas)
     }

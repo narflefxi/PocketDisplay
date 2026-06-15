@@ -5,15 +5,11 @@
     android:height="24dp"
     android:viewportWidth="490"
     android:viewportHeight="490">
-    <!-- Hotspot at center -->
+    <!-- Rotated 90deg version of resize_h -->
     <group
         android:rotation="90"
         android:pivotX="245"
-        android:pivotY="245"
-        android:scaleX="0.045"
-        android:scaleY="0.045"
-        android:translateX="-245"
-        android:translateY="-245">
+        android:pivotY="245">
         <path
             android:fillColor="#FFFFFF"
             android:pathData="M425.8,228.3L354.7,228.3L354.7,261.7L425.8,261.7L386.2,301.4L409.9,325.1L490,245L409.9,164.9L386.2,188.6z"
