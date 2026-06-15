@@ -524,14 +524,18 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     // ── Coordinate helpers ────────────────────────────────────────────────────
 
     private fun toNormalized(tx: Float, ty: Float): Pair<Float, Float> {
-        val vw = if (videoScaledW > 0f) videoScaledW else binding.textureView.width.toFloat()
-        val vh = if (videoScaledH > 0f) videoScaledH else binding.textureView.height.toFloat()
+        val vw = binding.textureView.width.toFloat()
+        val vh = binding.textureView.height.toFloat()
         if (vw == 0f || vh == 0f) return Pair(0f, 0f)
-        val x = ((tx - videoOffsetX) / vw).coerceIn(0f, 1f)
-        val y = ((ty - videoOffsetY) / vh).coerceIn(0f, 1f)
-        // rotation=180° corrects the OpenGL y-flip from MediaCodec; touch events carry
-        // raw screen coords (the visual rotation does NOT invert event.x/y), so
-        // physical top = Windows TOP — no axis inversion needed.
+        // event.x/y are in the TextureView's LOCAL coordinate space: the parent
+        // ConstraintLayout applies the inverse of textureView.scaleX/scaleY (set in
+        // applyFillTransform) when dispatching touch events.  Due to the symmetric
+        // scale-from-center pivot, the entire video content maps to [0, vw] × [0, vh]
+        // in local space — dividing by the layout dims gives correct [0,1] normalization.
+        // videoOffsetX/Y and videoScaledW/H are screen/visual-space values and must NOT
+        // be used here (mixing coordinate spaces was the root cause of the vertical drift).
+        val x = (tx / vw).coerceIn(0f, 1f)
+        val y = (ty / vh).coerceIn(0f, 1f)
         return Pair(x, y)
     }
 

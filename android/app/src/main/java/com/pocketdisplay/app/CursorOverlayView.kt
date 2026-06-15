@@ -5,95 +5,33 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.drawable.Drawable
 import android.util.AttributeSet
 import android.view.View
+import androidx.appcompat.content.res.AppCompatResources
 
-/**
- * Transparent full-screen overlay that draws a Windows-style arrow cursor.
- *
- * Sits above the TextureView in z-order. Touch events pass through because
- * isClickable and isFocusable are both false.
- *
- * Call [moveTo] from the touch handler (raw screen coordinates — no transform
- * needed because this view and the finger occupy the same screen space).
- * Call [hide] when streaming stops.
- */
 class CursorOverlayView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null
 ) : View(context, attrs) {
 
     private val s = resources.displayMetrics.density
-
-    // ── Arrow (type 0 / default) — hotspot at tip (0,0) ──────────────────────
-    private val arrowPath = Path().apply {
-        moveTo(  0f * s,   0f * s)
-        lineTo(  0f * s,  17f * s)
-        lineTo(  4f * s,  13f * s)
-        lineTo(  8f * s,  21f * s)
-        lineTo( 11f * s,  19f * s)
-        lineTo(  7f * s,  11f * s)
-        lineTo( 12f * s,  11f * s)
-        close()
-    }
-
-    // ── Double-headed arrow (resize) — centered at origin, horizontal ─────────
-    private val dblArrowPath = Path().apply {
-        val shaft = 7f * s; val hw = 3.5f * s; val ht = 5f * s
-        moveTo(-(shaft + ht), 0f); lineTo(-shaft, -hw); lineTo( shaft, -hw)
-        lineTo( shaft + ht,  0f); lineTo( shaft,  hw); lineTo(-shaft,  hw)
-        close()
-    }
-
-    // ── Hourglass (type 2 / wait) — centered at origin ───────────────────────
-    private val hourglassPath = Path().apply {
-        val w = 7f * s; val h = 9f * s
-        moveTo(-w, -h); lineTo(w, -h); lineTo(0f, 0f); close()
-        moveTo( 0f, 0f); lineTo(-w, h); lineTo(w, h);  close()
-    }
-
-    // ── Hand / pointer (type 9) — upward arrow, hotspot at tip (0,0) ─────────
-    private val handPath = Path().apply {
-        val hw = 5f * s; val hh = 7f * s; val sw = 2.5f * s; val sh = 11f * s
-        moveTo(0f, 0f)
-        lineTo(-hw, hh); lineTo(-sw, hh); lineTo(-sw, hh + sh)
-        lineTo( sw, hh + sh); lineTo(sw, hh); lineTo(hw, hh)
-        close()
-    }
-
-    // ── Paints ────────────────────────────────────────────────────────────────
-    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        style = Paint.Style.FILL
-    }
-    private val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.BLACK
-        style = Paint.Style.STROKE
-        strokeWidth = 2f * s
-        strokeJoin = Paint.Join.ROUND
-        strokeCap = Paint.Cap.ROUND
-    }
-    private val whiteLine = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        style = Paint.Style.STROKE
-        strokeWidth = 1.5f * s
-        strokeCap = Paint.Cap.ROUND
-    }
-    private val blackLine = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.BLACK
-        style = Paint.Style.STROKE
-        strokeWidth = 3f * s
-        strokeCap = Paint.Cap.ROUND
-    }
-
+    private val cursorResIds = intArrayOf(
+        R.drawable.cursor_arrow, R.drawable.cursor_ibeam, R.drawable.cursor_wait,
+        R.drawable.cursor_cross, R.drawable.cursor_resize_h, R.drawable.cursor_resize_v,
+        R.drawable.cursor_resize_nwse, R.drawable.cursor_resize_nesw, R.drawable.cursor_move,
+        R.drawable.cursor_hand, R.drawable.cursor_no
+    )
+    private val cachedDrawables = arrayOfNulls<Drawable?>(11)
+    private val fallbackCursors = BooleanArray(11)
     private var cursorX = 0f
     private var cursorY = 0f
     private var cursorType = 0
     private var cursorVisible = false
 
     init {
-        isClickable  = false
-        isFocusable  = false
+        isClickable = false
+        isFocusable = false
     }
 
     fun moveTo(x: Float, y: Float, type: Int = 0) {
@@ -102,7 +40,6 @@ class CursorOverlayView @JvmOverloads constructor(
         invalidate()
     }
 
-    /** Hide the cursor (e.g. when streaming stops). */
     fun hide() {
         cursorVisible = false
         invalidate()
@@ -110,78 +47,302 @@ class CursorOverlayView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         if (!cursorVisible) return
-        when (cursorType) {
-            1     -> drawIBeam(canvas)
-            2     -> drawWait(canvas)
-            3     -> drawCross(canvas)
-            4     -> drawDoubleArrow(canvas, 0f)
-            5     -> drawDoubleArrow(canvas, 90f)
-            6     -> drawDoubleArrow(canvas, -45f)
-            7     -> drawDoubleArrow(canvas, 45f)
-            8     -> { drawDoubleArrow(canvas, 0f); drawDoubleArrow(canvas, 90f) }
-            9     -> drawHand(canvas)
-            10    -> drawNo(canvas)
-            else  -> drawArrow(canvas)
+        val type = cursorType.coerceIn(0, 10)
+        val drawable = getOrLoadDrawable(type)
+        if (drawable != null && !fallbackCursors[type]) {
+            drawCursorWithHotspot(canvas, drawable, type)
+        } else {
+            drawFallback(canvas, type)
         }
     }
 
-    private fun drawArrow(canvas: Canvas) {
-        canvas.save()
-        canvas.translate(cursorX, cursorY)
-        canvas.drawPath(arrowPath, outlinePaint)
-        canvas.drawPath(arrowPath, fillPaint)
-        canvas.restore()
+    private fun getOrLoadDrawable(type: Int): Drawable? {
+        cachedDrawables[type]?.let { return it }
+        return try {
+            val drawable = AppCompatResources.getDrawable(context, cursorResIds[type])?.mutate()
+            cachedDrawables[type] = drawable
+            drawable
+        } catch (e: Exception) {
+            fallbackCursors[type] = true
+            null
+        }
     }
 
-    private fun drawIBeam(canvas: Canvas) {
-        val cw = 4f * s; val ch = 9f * s
-        canvas.drawLine(cursorX - cw, cursorY - ch, cursorX + cw, cursorY - ch, blackLine)
-        canvas.drawLine(cursorX,      cursorY - ch, cursorX,      cursorY + ch, blackLine)
-        canvas.drawLine(cursorX - cw, cursorY + ch, cursorX + cw, cursorY + ch, blackLine)
-        canvas.drawLine(cursorX - cw, cursorY - ch, cursorX + cw, cursorY - ch, whiteLine)
-        canvas.drawLine(cursorX,      cursorY - ch, cursorX,      cursorY + ch, whiteLine)
-        canvas.drawLine(cursorX - cw, cursorY + ch, cursorX + cw, cursorY + ch, whiteLine)
+    private fun drawCursorWithHotspot(canvas: Canvas, drawable: Drawable, type: Int) {
+        val w = drawable.intrinsicWidth
+        val h = drawable.intrinsicHeight
+        // Per-type fractional hotspot (hx, hy): fraction of drawable size where the
+        // logical click point sits. left = cursorX - hx*w, top = cursorY - hy*h.
+        // Drawables now fill their viewport naturally with NO hotspot translate group.
+        //   type 0 arrow:      tip at ~(384,213) in 1024x1024 viewport → (0.375, 0.208)
+        //   type 9 hand:       index fingertip at SVG (146.47, 0) + 34.79 translate
+        //                      → (181.26, 34.79) in 456.16×456.16 viewport → (0.397, 0.076)
+        //   all others:        hotspot at center → (0.5, 0.5)
+        val hx: Float
+        val hy: Float
+        when (type) {
+            0 -> { hx = 0.375f; hy = 0.208f }
+            9 -> { hx = 0.397f; hy = 0.076f }
+            else -> { hx = 0.5f; hy = 0.5f }
+        }
+        val left = (cursorX - hx * w).toInt()
+        val top  = (cursorY - hy * h).toInt()
+        drawable.setBounds(left, top, left + w, top + h)
+        drawable.draw(canvas)
     }
 
-    private fun drawWait(canvas: Canvas) {
-        canvas.save()
-        canvas.translate(cursorX, cursorY)
-        canvas.drawPath(hourglassPath, outlinePaint)
-        canvas.drawPath(hourglassPath, fillPaint)
-        canvas.restore()
+    private fun drawFallback(canvas: Canvas, type: Int) {
+        when (type) {
+            1 -> drawFallbackIBeam(canvas)
+            2 -> drawFallbackWait(canvas)
+            3 -> drawFallbackCross(canvas)
+            4 -> drawFallbackDoubleArrow(canvas, 0f)
+            5 -> drawFallbackDoubleArrow(canvas, 90f)
+            6 -> drawFallbackDoubleArrow(canvas, -45f)
+            7 -> drawFallbackDoubleArrow(canvas, 45f)
+            8 -> drawFallbackMove(canvas)
+            9 -> drawFallbackHand(canvas)
+            10 -> drawFallbackNo(canvas)
+            else -> drawFallbackArrow(canvas)
+        }
     }
 
-    private fun drawCross(canvas: Canvas) {
-        val a = 10f * s
-        canvas.drawLine(cursorX - a, cursorY, cursorX + a, cursorY, blackLine)
-        canvas.drawLine(cursorX, cursorY - a, cursorX, cursorY + a, blackLine)
-        canvas.drawLine(cursorX - a, cursorY, cursorX + a, cursorY, whiteLine)
-        canvas.drawLine(cursorX, cursorY - a, cursorX, cursorY + a, whiteLine)
-        canvas.drawCircle(cursorX, cursorY, 2f * s, fillPaint)
+    private fun drawFallbackArrow(canvas: Canvas) {
+        val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            style = Paint.Style.STROKE
+            strokeWidth = 1.5f * s
+            strokeJoin = Paint.Join.ROUND
+            strokeCap = Paint.Cap.ROUND
+        }
+        val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.FILL
+        }
+        val path = Path().apply {
+            moveTo(cursorX, cursorY)
+            lineTo(cursorX, cursorY + 20f * s)
+            lineTo(cursorX + 4f * s, cursorY + 15.5f * s)
+            lineTo(cursorX + 7f * s, cursorY + 22f * s)
+            cubicTo(cursorX + 8.2f * s, cursorY + 23f * s,
+                    cursorX + 9.8f * s, cursorY + 22.5f * s,
+                    cursorX + 10.2f * s, cursorY + 21f * s)
+            lineTo(cursorX + 6.8f * s, cursorY + 13.5f * s)
+            lineTo(cursorX + 12.5f * s, cursorY + 13.5f * s)
+            cubicTo(cursorX + 13.2f * s, cursorY + 13.5f * s,
+                    cursorX + 13.5f * s, cursorY + 12.8f * s,
+                    cursorX + 13f * s, cursorY + 12f * s)
+            lineTo(cursorX + 1f * s, cursorY + 0.5f * s)
+            close()
+        }
+        canvas.drawPath(path, outlinePaint)
+        canvas.drawPath(path, fillPaint)
     }
 
-    private fun drawDoubleArrow(canvas: Canvas, angleDeg: Float) {
+    private fun drawFallbackIBeam(canvas: Canvas) {
+        val sh = 11f * s
+        val sw = 4.5f * s
+        val blackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            style = Paint.Style.STROKE
+            strokeWidth = 2.5f * s
+            strokeCap = Paint.Cap.ROUND
+        }
+        val whitePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.STROKE
+            strokeWidth = 1.5f * s
+            strokeCap = Paint.Cap.ROUND
+        }
+        val cx = cursorX
+        val cy = cursorY
+        canvas.drawLine(cx, cy - sh, cx, cy + sh, blackPaint)
+        canvas.drawLine(cx, cy - sh, cx, cy + sh, whitePaint)
+        canvas.drawLine(cx - sw, cy - sh, cx + sw, cy - sh, blackPaint)
+        canvas.drawLine(cx - sw, cy - sh, cx + sw, cy - sh, whitePaint)
+        canvas.drawLine(cx - sw, cy + sh, cx + sw, cy + sh, blackPaint)
+        canvas.drawLine(cx - sw, cy + sh, cx + sw, cy + sh, whitePaint)
+    }
+
+    private fun drawFallbackWait(canvas: Canvas) {
+        val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            style = Paint.Style.STROKE
+            strokeWidth = 1.5f * s
+            strokeJoin = Paint.Join.ROUND
+        }
+        val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.FILL
+        }
+        val w = 6.5f * s
+        val h = 10f * s
+        val nw = 1.2f * s
+        val cx = cursorX
+        val cy = cursorY
+        val path = Path().apply {
+            moveTo(cx - w, cy - h)
+            lineTo(cx + w, cy - h)
+            lineTo(cx + nw, cy - 0.5f * s)
+            lineTo(cx - nw, cy - 0.5f * s)
+            close()
+            moveTo(cx - nw, cy + 0.5f * s)
+            lineTo(cx + nw, cy + 0.5f * s)
+            lineTo(cx + w, cy + h)
+            lineTo(cx - w, cy + h)
+            close()
+            moveTo(cx - w, cy - h - 1.5f * s)
+            lineTo(cx + w, cy - h - 1.5f * s)
+            lineTo(cx + w, cy - h)
+            lineTo(cx - w, cy - h)
+            close()
+            moveTo(cx - w, cy + h)
+            lineTo(cx + w, cy + h)
+            lineTo(cx + w, cy + h + 1.5f * s)
+            lineTo(cx - w, cy + h + 1.5f * s)
+            close()
+        }
+        canvas.drawPath(path, outlinePaint)
+        canvas.drawPath(path, fillPaint)
+    }
+
+    private fun drawFallbackCross(canvas: Canvas) {
+        val a = 11f * s
+        val dotR = 1.8f * s
+        val blackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            style = Paint.Style.STROKE
+            strokeWidth = 2.5f * s
+            strokeCap = Paint.Cap.ROUND
+        }
+        val whitePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.STROKE
+            strokeWidth = 1.5f * s
+            strokeCap = Paint.Cap.ROUND
+        }
+        val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            style = Paint.Style.FILL
+        }
+        canvas.drawLine(cursorX - a, cursorY, cursorX + a, cursorY, blackPaint)
+        canvas.drawLine(cursorX, cursorY - a, cursorX, cursorY + a, blackPaint)
+        canvas.drawLine(cursorX - a, cursorY, cursorX + a, cursorY, whitePaint)
+        canvas.drawLine(cursorX, cursorY - a, cursorX, cursorY + a, whitePaint)
+        canvas.drawCircle(cursorX, cursorY, dotR, dotPaint)
+    }
+
+    private fun drawFallbackDoubleArrow(canvas: Canvas, angleDeg: Float) {
+        val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            style = Paint.Style.STROKE
+            strokeWidth = 1.5f * s
+            strokeJoin = Paint.Join.ROUND
+        }
+        val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.FILL
+        }
+        val sw = 1.8f * s
+        val sl = 5.5f * s
+        val hw = 4.5f * s
+        val tl = sl + 5.5f * s
+        val path = Path().apply {
+            moveTo(tl, 0f)
+            lineTo(sl, -hw)
+            lineTo(sl, -sw)
+            lineTo(-sl, -sw)
+            lineTo(-sl, -hw)
+            lineTo(-tl, 0f)
+            lineTo(-sl, hw)
+            lineTo(-sl, sw)
+            lineTo(sl, sw)
+            lineTo(sl, hw)
+            close()
+        }
         canvas.save()
         canvas.translate(cursorX, cursorY)
         canvas.rotate(angleDeg)
-        canvas.drawPath(dblArrowPath, outlinePaint)
-        canvas.drawPath(dblArrowPath, fillPaint)
+        canvas.drawPath(path, outlinePaint)
+        canvas.drawPath(path, fillPaint)
         canvas.restore()
     }
 
-    private fun drawHand(canvas: Canvas) {
-        canvas.save()
-        canvas.translate(cursorX, cursorY)
-        canvas.drawPath(handPath, outlinePaint)
-        canvas.drawPath(handPath, fillPaint)
-        canvas.restore()
+    private fun drawFallbackMove(canvas: Canvas) {
+        drawFallbackDoubleArrow(canvas, 0f)
+        drawFallbackDoubleArrow(canvas, 90f)
     }
 
-    private fun drawNo(canvas: Canvas) {
-        val r = 9f * s; val d = r * 0.707f
-        canvas.drawCircle(cursorX, cursorY, r, blackLine)
-        canvas.drawCircle(cursorX, cursorY, r, whiteLine)
-        canvas.drawLine(cursorX - d, cursorY - d, cursorX + d, cursorY + d, blackLine)
-        canvas.drawLine(cursorX - d, cursorY - d, cursorX + d, cursorY + d, whiteLine)
+    private fun drawFallbackHand(canvas: Canvas) {
+        val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            style = Paint.Style.STROKE
+            strokeWidth = 1.5f * s
+            strokeJoin = Paint.Join.ROUND
+        }
+        val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.FILL
+        }
+        val ifw = 2.0f * s
+        val fTop = 9.0f * s
+        val fBot = 24.0f * s
+        val fL = -5.5f * s
+        val fR = 6.5f * s
+        val mL = ifw
+        val mR = 4.0f * s
+        val rL = 3.5f * s
+        val rR = 5.5f * s
+        val pL = 5.0f * s
+        val pR = fR
+        val path = Path().apply {
+            moveTo(cursorX + ifw, cursorY)
+            lineTo(cursorX + ifw, cursorY + fTop)
+            quadTo(cursorX + (mL + mR) / 2f, cursorY + fTop - 4.5f * s,
+                   cursorX + mR, cursorY + fTop)
+            quadTo(cursorX + (rL + rR) / 2f, cursorY + fTop - 3.5f * s,
+                   cursorX + rR, cursorY + fTop)
+            quadTo(cursorX + (pL + pR) / 2f, cursorY + fTop - 2.5f * s,
+                   cursorX + pR, cursorY + fTop)
+            lineTo(cursorX + fR, cursorY + fBot - 2.5f * s)
+            quadTo(cursorX + fR, cursorY + fBot,
+                   cursorX + fR - 2.5f * s, cursorY + fBot)
+            lineTo(cursorX + fL + 2.5f * s, cursorY + fBot)
+            quadTo(cursorX + fL, cursorY + fBot,
+                   cursorX + fL, cursorY + fBot - 2.5f * s)
+            lineTo(cursorX + fL, cursorY + fTop + 5.0f * s)
+            quadTo(cursorX + fL - 3.5f * s, cursorY + fTop + 4.5f * s,
+                   cursorX + fL - 4.0f * s, cursorY + fTop + 2.5f * s)
+            quadTo(cursorX + fL - 3.5f * s, cursorY + fTop + 0.5f * s,
+                   cursorX + fL, cursorY + fTop)
+            lineTo(cursorX - ifw, cursorY + fTop)
+            lineTo(cursorX - ifw, cursorY)
+            close()
+        }
+        canvas.drawPath(path, outlinePaint)
+        canvas.drawPath(path, fillPaint)
+    }
+
+    private fun drawFallbackNo(canvas: Canvas) {
+        val r = 10f * s
+        val d = r * 0.7071f
+        val blackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK
+            style = Paint.Style.STROKE
+            strokeWidth = 3.0f * s
+            strokeCap = Paint.Cap.ROUND
+        }
+        val whitePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.STROKE
+            strokeWidth = 1.5f * s
+            strokeCap = Paint.Cap.ROUND
+        }
+        canvas.drawCircle(cursorX, cursorY, r, blackPaint)
+        canvas.drawCircle(cursorX, cursorY, r, whitePaint)
+        canvas.drawLine(cursorX - d, cursorY - d,
+                        cursorX + d, cursorY + d, blackPaint)
+        canvas.drawLine(cursorX - d, cursorY - d,
+                        cursorX + d, cursorY + d, whitePaint)
     }
 }

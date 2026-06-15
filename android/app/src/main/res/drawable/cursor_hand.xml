@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="456.16"
+    android:viewportHeight="456.16">
+    <!-- Solid silhouette hand from hand.svg (CC0). ViewBox offset baked in via translate group. -->
+    <!-- Original SVG viewBox: -34.79 -34.79 456.16 456.16 — shift paths by +34.79 via group. -->
+    <group android:translateX="34.79" android:translateY="34.79">
+        <path
+            android:fillColor="#FFFFFF"
+            android:fillType="nonZero"
+            android:pathData="M323.54,173.105c-7.207,0-13.947,1.954-19.782,5.31c-3.462-18.395-19.595-32.312-39.007-32.312c-7.874,0-15.186,2.316-21.361,6.274c-5.771-14.825-20.143-25.333-36.988-25.333c-7.398,0-14.286,2.051-20.219,5.57V39.715C186.183,17.778,168.392,0,146.47,0c-21.941,0-39.714,17.778-39.714,39.715v179.202l-14.067-15.831c-14.551-16.4-39.656-17.879-56.055-3.32c-16.403,14.573-17.891,39.675-3.32,56.075l86.635,97.547c17.421,17.05,47.141,33.188,72.679,33.188h85.319c47.129,0,85.342-34.201,85.342-76.4l-0.035-97.351C363.253,190.893,345.463,173.105,323.54,173.105z"
+            android:strokeColor="#000000"
+            android:strokeWidth="10" />
+    </group>
+</vector>
