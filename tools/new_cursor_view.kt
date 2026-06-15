@@ -247,7 +247,7 @@ class CursorOverlayView @JvmOverloads constructor(
             lineTo(sl, hw)
             close()
         }
-        canvas.save()
+        canvas.Save()
         canvas.translate(cursorX, cursorY)
         canvas.rotate(angleDeg)
         canvas.drawPath(path, outlinePaint)

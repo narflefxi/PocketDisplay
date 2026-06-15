@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="55.7"
+    android:viewportHeight="55.7">
+    <!-- Hotspot at center: center is (27.85, 27.85) -->
+    <group
+        android:scaleX="0.4"
+        android:scaleY="0.4"
+        android:translateX="-27.85"
+        android:translateY="-27.85">
+        <!-- White fill circle with black stroke -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M27.85,0C19.91,0,12.74,3.36,7.66,8.72C7.63,8.75,7.58,8.76,7.55,8.8C7.5,8.85,7.48,8.92,7.43,8.98C2.83,13.95,0,20.57,0,27.85c0,15.36,12.49,27.85,27.85,27.85c15.36,0,27.85-12.49,27.85-27.85C55.7,12.49,43.21,0,27.85,0zM4.49,27.85c0-5.32,1.81-10.21,4.81-14.14l32.69,32.69c-3.93,3-8.82,4.81-14.14,4.81C14.97,51.21,4.49,40.73,4.49,27.85zM45.28,43.35L12.35,10.42c4.13-3.68,9.55-5.93,15.5-5.93c12.88,0,23.36,10.48,23.36,23.36C51.21,33.8,48.96,39.23,45.28,43.35z"
+            android:strokeColor="#000000"
+            android:strokeWidth="2" />
+        <!-- Slash line: white thick then black thin -->
+        <path
+            android:pathData="M9.35,9.35L46.35,46.35"
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="4"
+            android:strokeLineCap="round" />
+        <path
+            android:pathData="M9.35,9.35L46.35,46.35"
+            android:strokeColor="#000000"
+            android:strokeWidth="2"
+            android:strokeLineCap="round" />
+    </group>
+</vector>

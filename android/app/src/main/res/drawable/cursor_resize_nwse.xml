@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="16"
+    android:viewportHeight="16">
+    <!-- Hotspot at center: center is (8,8) -->
+    <group
+        android:scaleX="1.3"
+        android:scaleY="1.3"
+        android:translateX="-2.4"
+        android:translateY="-2.4">
+        <!-- White fill with black stroke -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M1.99,12.6L6.59,8L8,9.41L3.41,14L5.99,14L5.99,16L1.99,16L-0.01,16L-0.01,10L1.99,10L1.99,12.6zM12.59,2L10.01,2L10.01,0L16.01,0L16.01,6L14.01,6L14.01,3.4L9.41,8L8,6.59L12.59,2z"
+            android:strokeColor="#000000"
+            android:strokeWidth="0.8" />
+    </group>
+</vector>
