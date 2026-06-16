@@ -1,19 +1,69 @@
 #include "HwEncoder.h"
 
 #include <mferror.h>
+#include <strmif.h>   // for CODECAPI_AVEncVideoForceKeyFrame
+#include <codecapi.h> // for CODECAPI_AVEncVideoForceKeyFrame, CODECAPI_AVEncMPVGOPSize
 #include <cstring>
 #include <algorithm>
 #include <chrono>
 #include <iostream>
+#include <iomanip>    // for hex logging
 
 #pragma comment(lib, "mf.lib")
 #pragma comment(lib, "mfplat.lib")
 #pragma comment(lib, "mfuuid.lib")
 #pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "strmiids.lib")
 
 using Microsoft::WRL::ComPtr;
 
-// ── Annex-B NAL helpers ──────────────────────────────────────────────────────
+// ── Diagnostic logging helpers ────────────────────────────────────────────────
+
+static void LogHex(const std::string& prefix, const uint8_t* data, size_t len) {
+    std::cout << prefix;
+    const size_t max_bytes = 16;
+    for (size_t i = 0; i < std::min(len, max_bytes); ++i) {
+        std::cout << std::hex << std::setfill('0') << std::setw(2) << (int)data[i] << " ";
+    }
+    if (len > max_bytes) std::cout << "...";
+    std::cout << std::dec << " (size=" << len << ")\n";
+}
+
+// ── NAL format helpers ───────────────────────────────────────────────────────
+
+static const uint8_t kAnnexBStartCode[] = {0, 0, 0, 1};
+
+// Convert AVCC (length-prefixed) to Annex-B (start code) format.
+// If output_annexb is empty, input may already be Annex-B (no conversion needed).
+static bool ConvertAvccToAnnexB(const uint8_t* data, size_t size,
+                                 std::vector<uint8_t>& output_annexb) {
+    output_annexb.clear();
+    if (size < 4) return false;
+
+    // Check if already Annex-B (starts with 00 00 00 01 or 00 00 01)
+    if ((data[0] == 0 && data[1] == 0 && data[2] == 0 && data[3] == 1) ||
+        (data[0] == 0 && data[1] == 0 && data[2] == 1)) {
+        output_annexb.assign(data, data + size);
+        return true;
+    }
+
+    // Assume AVCC format: 4-byte big-endian length prefix per NAL unit
+    size_t pos = 0;
+    while (pos + 4 <= size) {
+        uint32_t nal_len = (data[pos] << 24) | (data[pos+1] << 16) |
+                          (data[pos+2] << 8) | data[pos+3];
+        pos += 4;
+        if (nal_len > size - pos || nal_len == 0) break;
+
+        // Add Annex-B start code
+        output_annexb.insert(output_annexb.end(),
+                             kAnnexBStartCode, kAnnexBStartCode + 4);
+        output_annexb.insert(output_annexb.end(),
+                             data + pos, data + pos + nal_len);
+        pos += nal_len;
+    }
+    return !output_annexb.empty();
+}
 
 static bool FindNalStartCode(const uint8_t* data, size_t size,
                               size_t start, size_t& sc_pos, int& sc_len) {
@@ -143,9 +193,23 @@ void HwEncoder::DrainOutput() {
     // Some hardware MFTs allocate their own output samples
     HRESULT hr = encoder_->ProcessOutput(0, 1, &out_buf, &status);
     if (hr == MF_E_TRANSFORM_STREAM_CHANGE) {
-        // Output type changed — ignore and re-query
-        ComPtr<IMFMediaType> ignored;
-        encoder_->GetOutputCurrentType(0, &ignored);
+        // Output type changed — extract SPS/PPS from MF_MT_MPEG_SEQUENCE_HEADER
+        // This is where MF encoders store the codec config data
+        ComPtr<IMFMediaType> mt;
+        if (SUCCEEDED(encoder_->GetOutputCurrentType(0, &mt))) {
+            UINT32 blob_size = 0;
+            UINT8 blob_buf[1024] = {};  // SPS/PPS should fit in 1KB
+            HRESULT hr_blob = mt->GetBlob(MF_MT_MPEG_SEQUENCE_HEADER, blob_buf, sizeof(blob_buf), &blob_size);
+            if (SUCCEEDED(hr_blob) && blob_size > 0) {
+                // MF stores SPS/PPS in AVCC format - convert to Annex-B
+                std::vector<uint8_t> annexb;
+                if (ConvertAvccToAnnexB(blob_buf, blob_size, annexb)) {
+                    sps_pps_cache_ = std::move(annexb);
+                    sps_pps_found_ = true;
+                    LogHex("[HwEncoder] SPS/PPS extracted (AVCC->AnnexB): ", sps_pps_cache_.data(), sps_pps_cache_.size());
+                }
+            }
+        }
         return;
     }
     if (FAILED(hr)) return;
@@ -158,13 +222,23 @@ void HwEncoder::DrainOutput() {
         BYTE* data = nullptr; DWORD len = 0;
         if (FAILED(media_buf->Lock(&data, nullptr, &len))) return;
 
-        std::vector<uint8_t> nal_data(data, data + len);
+        std::vector<uint8_t> raw_data(data, data + len);
         media_buf->Unlock();
 
+        // Convert AVCC to Annex-B format (MF outputs AVCC, Android expects Annex-B)
+        std::vector<uint8_t> nal_data;
+        if (!ConvertAvccToAnnexB(raw_data.data(), raw_data.size(), nal_data)) {
+            // If conversion fails, use raw data (might already be Annex-B)
+            nal_data = std::move(raw_data);
+        }
+
+        // Check for SPS/PPS if not yet found (fallback in case stream change wasn't detected)
         if (!sps_pps_found_) {
             bool has_idr = false;
-            if (ParseSpsPps(nal_data.data(), nal_data.size(), sps_pps_cache_, has_idr))
+            if (ParseSpsPps(nal_data.data(), nal_data.size(), sps_pps_cache_, has_idr)) {
                 sps_pps_found_ = true;
+                LogHex("[HwEncoder] SPS/PPS found inline: ", sps_pps_cache_.data(), sps_pps_cache_.size());
+            }
         }
 
         {
@@ -266,6 +340,27 @@ bool HwEncoder::Initialize(int width, int height, int fps, int bitrate_kbps) {
     encoder_->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
     encoder_->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
 
+    // Configure encoder properties for proper streaming
+    ComPtr<ICodecAPI> codec_api;
+    if (SUCCEEDED(encoder_.As(&codec_api))) {
+        // Force an IDR (keyframe) for the first encoded frame
+        VARIANT var;
+        var.vt = VT_BOOL;
+        var.boolVal = VARIANT_TRUE;
+        HRESULT hr_force = codec_api->SetValue(&CODECAPI_AVEncVideoForceKeyFrame, &var);
+        if (SUCCEEDED(hr_force)) {
+            std::cout << "      CODECAPI_AVEncVideoForceKeyFrame enabled for first frame\n";
+        }
+
+        // Set GOP size to 60 frames (1 second at 60fps) for periodic keyframes
+        var.vt = VT_UI4;
+        var.ulVal = 60;  // GOP size
+        HRESULT hr_gop = codec_api->SetValue(&CODECAPI_AVEncMPVGOPSize, &var);
+        if (SUCCEEDED(hr_gop)) {
+            std::cout << "      CODECAPI_AVEncMPVGOPSize set to 60\n";
+        }
+    }
+
     running_ = true;
     event_thread_ = std::thread(&HwEncoder::EventLoop, this);
     return true;
@@ -279,6 +374,10 @@ bool HwEncoder::GetConfigPacket(std::vector<uint8_t>& sps_pps_out) {
     // Not available yet — caller should retry after first keyframe
     return false;
 }
+
+// Diagnostic logging state (static to track across calls)
+static std::atomic<int> s_frame_counter{0};
+static std::atomic<bool> s_config_logged{false};
 
 bool HwEncoder::EncodeFrame(const uint8_t* bgra,
                               std::vector<uint8_t>& nal_out,
@@ -320,6 +419,24 @@ bool HwEncoder::EncodeFrame(const uint8_t* bgra,
             }
         }
     }
+
+    // Diagnostic logging: config packet and first 5 frames
+    int frame_num = s_frame_counter.fetch_add(1);
+
+    // Log config packet once when available
+    if (!s_config_logged.load() && sps_pps_found_) {
+        s_config_logged.store(true);
+        LogHex("[HwEncoder] Config packet (SPS/PPS): ", sps_pps_cache_.data(), sps_pps_cache_.size());
+    }
+
+    // Log first 5 output samples
+    if (frame_num < 5) {
+        std::cout << "[HwEncoder] Frame #" << frame_num
+                  << " size=" << nal_out.size()
+                  << " keyframe=" << (is_keyframe ? "YES" : "no") << "\n";
+        LogHex("[HwEncoder]   First bytes: ", nal_out.data(), std::min<size_t>(nal_out.size(), 16));
+    }
+
     return true;
 }
 
@@ -339,4 +456,8 @@ void HwEncoder::Close() {
     pts_ = 0;
     sps_pps_found_ = false;
     is_hardware_ = false;
+
+    // Reset diagnostic counters for next session
+    s_frame_counter.store(0);
+    s_config_logged.store(false);
 }

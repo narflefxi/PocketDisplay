@@ -61,6 +61,13 @@ The app is intended for commercial sale. All bundled assets and dependencies mus
 - **Housekeeping**: consolidate `PROJECT_CONTEXT.md` into `CLAUDE.md`; delete merged branches.
 
 ## Recently Fixed
+- **Media Foundation bitstream fix (black screen issue)** ✅
+  - **Root cause**: Media Foundation H.264 encoder outputs **AVCC format** (4-byte length-prefixed NALs), but Android MediaCodec expects **Annex-B format** (00 00 00 01 start codes).
+  - **SPS/PPS extraction**: MF stores codec config in `MF_MT_MPEG_SEQUENCE_HEADER` attribute (after first `MF_E_TRANSFORM_STREAM_CHANGE`), NOT inline like x264. The code now reads this attribute and converts AVCC to Annex-B.
+  - **NAL format conversion**: Added `ConvertAvccToAnnexB()` helper to convert MF's AVCC output to Annex-B format that Android expects.
+  - **Keyframe/IDR**: Set `CODECAPI_AVEncVideoForceKeyFrame` for first frame and `CODECAPI_AVEncMPVGOPSize=60` for periodic keyframes (1 second at 60fps).
+  - **Diagnostic logging**: Added Windows-side logging (config packet hex, first 5 frames size/keyframe status) and Android-side logging (csd-0 hex, configure result, decoded frame count) for visibility.
+  - Changed files: `windows/src/HwEncoder.cpp`, `android/app/src/main/java/com/pocketdisplay/app/VideoDecoder.kt`.
 - x264 GPL dependency removed ✅
   - Gated x264 behind `POCKETDISPLAY_ENABLE_X264` CMake option (default OFF) for commercial builds.
   - Media Foundation H.264 encoder is now default with hardware → software MFT fallback.

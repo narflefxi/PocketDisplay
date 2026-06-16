@@ -3,8 +3,11 @@ package com.pocketdisplay.app
 import android.media.MediaCodec
 import android.media.MediaFormat
 import android.os.Build
+import android.util.Log
 import android.view.Surface
 import java.nio.ByteBuffer
+
+private const val TAG = "PocketDisplay"
 
 class VideoDecoder(
     private val surface: Surface,
@@ -17,33 +20,33 @@ class VideoDecoder(
     @Volatile private var running = false
     @Volatile private var firstFrameDispatched = false
     private var lastSpsData: ByteArray? = null
+    private var decodedFrameCount = 0
+    private var packetCount = 0
 
     fun configure(spsData: ByteArray, hintW: Int = 0, hintH: Int = 0) {
+        Log.d(TAG, "configure() called: spsData size=${spsData.size}, hintW=$hintW, hintH=$hintH")
+        Log.d(TAG, "  csd-0 hex: ${spsData.take(16).joinToString(" ") { String.format("%02X", it) }}${if (spsData.size > 16) "..." else ""}")
+
         // Deduplication: same SPS + decoder already running → no action needed.
-        // resend_thread sends codec_config every 2 s unconditionally; calling
-        // onConfigured here on every duplicate would fire onCodecConfigured()
-        // which (a) for WiFi after firstFrameReceived=true calls stopReceiver()
-        // and breaks streaming, and (b) for USB resets firstFrameReceived=false
-        // causing continuous spurious ACKs.  android_ready is already true at
-        // this point, so silently ignoring the duplicate is safe.
         if (lastSpsData != null && spsData.contentEquals(lastSpsData!!)) {
+            Log.d(TAG, "configure() dedup: same SPS, skipping")
             return
         }
 
         release()  // stop previous codec; also clears lastSpsData
+        decodedFrameCount = 0
+        packetCount = 0
 
         var c: MediaCodec? = null
         try {
             val (sps, pps) = parseSpsAndPps(spsData)
             if (sps == null) {
+                Log.e(TAG, "configure() failed: no SPS found in codec config")
                 onStatus("Config error: no SPS found")
                 return
             }
+            Log.d(TAG, "  Parsed SPS: ${sps.size} bytes, PPS: ${if (pps != null) "${pps.size} bytes" else "null"}")
 
-            // Use actual stream dimensions from the Windows stream-info packet.
-            // KEY_WIDTH=1/KEY_HEIGHT=1 (previous hint) is below one H.264 macroblock
-            // (16x16) and causes c2.android.avc.decoder to reject configure() with
-            // EINVAL (0xffffffea).  Fall back to 1280x720 only if dimensions unknown.
             val w = if (hintW > 0) hintW else 1280
             val h = if (hintH > 0) hintH else 720
             val format = MediaFormat.createVideoFormat("video/avc", w, h)
@@ -55,26 +58,34 @@ class VideoDecoder(
             }
 
             c = MediaCodec.createDecoderByType("video/avc")
+            Log.d(TAG, "  Calling MediaCodec.configure()...")
             c.configure(format, surface, null, 0)
+            Log.d(TAG, "  MediaCodec.configure() SUCCESS")
+
             c.start()
+            Log.d(TAG, "  MediaCodec.start() SUCCESS")
+
             codec                = c
-            c                    = null  // ownership transferred; don't release in catch
+            c                    = null
             running              = true
             firstFrameDispatched = false
             startOutputDrain()
-            // Set AFTER success so dedup correctly re-ACKs on Windows resend;
-            // if configure fails, lastSpsData stays null and the next resend retries.
             lastSpsData = spsData.copyOf()
             onStatus("Decoder ready")
             onConfigured?.invoke()
         } catch (e: Exception) {
-            try { c?.release() } catch (_: Exception) {}  // prevent resource leak
+            Log.e(TAG, "configure() FAILED: ${e.message}", e)
+            try { c?.release() } catch (_: Exception) {}
             onStatus("Decoder error: ${e.message}")
         }
     }
 
     fun decode(frameData: ByteArray, isKeyframe: Boolean) {
         val c = codec ?: return
+        packetCount++
+        if (packetCount <= 5) {
+            Log.d(TAG, "decode() packet #$packetCount: size=${frameData.size}, keyframe=$isKeyframe")
+        }
         try {
             val idx = c.dequeueInputBuffer(8_000L)
             if (idx >= 0) {
@@ -84,7 +95,11 @@ class VideoDecoder(
                 val flags = if (isKeyframe) MediaCodec.BUFFER_FLAG_KEY_FRAME else 0
                 c.queueInputBuffer(idx, 0, frameData.size, System.nanoTime() / 1000L, flags)
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            if (packetCount <= 5) {
+                Log.e(TAG, "decode() packet #$packetCount FAILED: ${e.message}")
+            }
+        }
     }
 
     private fun startOutputDrain() {
@@ -98,10 +113,15 @@ class VideoDecoder(
                             codec?.outputFormat?.let { fmt ->
                                 val w = fmt.getInteger(MediaFormat.KEY_WIDTH)
                                 val h = fmt.getInteger(MediaFormat.KEY_HEIGHT)
+                                Log.d(TAG, "Output format changed: ${w}x${h}")
                                 if (w > 0 && h > 0) onDimensions?.invoke(w, h)
                             }
                         }
                         in 0..Int.MAX_VALUE -> {
+                            decodedFrameCount++
+                            if (decodedFrameCount <= 5) {
+                                Log.d(TAG, "Decoded frame #$decodedFrameCount (pts=${info.presentationTimeUs})")
+                            }
                             var renderIdx = idx
                             while (true) {
                                 val peekIdx = codec?.dequeueOutputBuffer(info2, 0L) ?: break
@@ -120,12 +140,17 @@ class VideoDecoder(
                             codec?.releaseOutputBuffer(renderIdx, true)
                             if (!firstFrameDispatched) {
                                 firstFrameDispatched = true
+                                Log.d(TAG, "First frame dispatched to surface!")
                                 onFirstFrame?.invoke()
                             }
                         }
                     }
-                } catch (_: Exception) { break }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Output drain error: ${e.message}")
+                    break
+                }
             }
+            Log.d(TAG, "Output drain thread exited. Total decoded frames: $decodedFrameCount")
         }, "VideoDecoder-Output").also { it.isDaemon = true }.start()
     }
 
