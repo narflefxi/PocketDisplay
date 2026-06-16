@@ -58,8 +58,6 @@ The app is intended for commercial sale. All bundled assets and dependencies mus
 ## Known Issues / Deferred
 - **Resize cursor detection fails in custom-cursor apps** (e.g. Claude Desktop) — Windows-side cursor-type detection only matches standard `IDC_SIZE*` handles. Deferred.
 - **VDD extended display (#20)** — true borderless extended display. Deferred.
-- **#8**: Add custom resolution selection for streaming (enhancement).
-- **#5**: Connection not seamless on startup (bug).
 - **Housekeeping**: consolidate `PROJECT_CONTEXT.md` into `CLAUDE.md`; delete merged branches.
 
 ## Recently Fixed
