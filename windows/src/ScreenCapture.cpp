@@ -2,10 +2,11 @@
 #include <cstring>
 #include <stdexcept>
 #include <iostream>
-#include <thread>
-#include <chrono>
 
 ScreenCapture::~ScreenCapture() {
+    std::cout << "  [ScreenCapture] DTOR: releasing duplication"
+              << (duplication_ ? " (handle alive)" : " (no handle)")
+              << "\n";
     Release();
 }
 
@@ -72,33 +73,19 @@ bool ScreenCapture::Initialize(int adapter_idx, int output_idx) {
     width_  &= ~1;
     height_ &= ~1;
 
-    // DuplicateOutput with bounded retry — the OS may briefly hold the
-    // duplication handle after the previous session's Release().
-    static constexpr int kMaxRetries = 10;
-    static constexpr int kRetryMs    = 200;
-    for (int attempt = 0; attempt <= kMaxRetries; ++attempt) {
-        hr = output1->DuplicateOutput(device_.Get(), &duplication_);
-        if (SUCCEEDED(hr)) break;
-        // Transient errors where a retry may succeed once the old duplication
-        // handle is fully released by the OS:
-        //   E_INVALIDARG      (0x80070057) — "already duplicating this output"
-        //   E_ACCESSDENIED    (0x80070005) — secure desktop / transient lock
-        //   DXGI_ERROR_ACCESS_LOST          — desktop mode change
-        //   DXGI_ERROR_NOT_CURRENTLY_AVAILABLE — max concurrent duplications
-        const bool transient = (hr == E_INVALIDARG ||
-                                hr == E_ACCESSDENIED ||
-                                hr == DXGI_ERROR_ACCESS_LOST ||
-                                hr == DXGI_ERROR_NOT_CURRENTLY_AVAILABLE);
-        std::cerr << "  [ScreenCapture] DuplicateOutput attempt " << (attempt + 1)
-                  << "/" << (kMaxRetries + 1) << " failed hr=0x"
-                  << std::hex << hr << std::dec
-                  << (transient ? " (transient — retrying)" : " (fatal)") << "\n";
-        if (!transient || attempt == kMaxRetries) {
-            Release();
-            return false;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(kRetryMs));
+    // DuplicateOutput — only ONE active duplication per output per process is
+    // allowed.  The caller MUST ensure the previous ScreenCapture is fully
+    // destroyed (Release() called) before calling Initialize() again.
+    hr = output1->DuplicateOutput(device_.Get(), &duplication_);
+    if (FAILED(hr)) {
+        std::cerr << "  [ScreenCapture] DuplicateOutput FAILED hr=0x"
+                  << std::hex << hr << std::dec << "\n";
+        if (hr == E_INVALIDARG)
+            std::cerr << "  [ScreenCapture]   -> E_INVALIDARG: previous duplication still alive in this process!\n";
+        Release();
+        return false;
     }
+    std::cout << "  [ScreenCapture] DuplicateOutput OK\n";
 
     return CreateStagingTexture(width_, height_);
 }
@@ -173,7 +160,10 @@ bool ScreenCapture::CaptureFrame(std::vector<uint8_t>& bgra_out, int& width, int
 
 void ScreenCapture::Release() {
     staging_.Reset();
-    duplication_.Reset();
+    if (duplication_) {
+        std::cout << "  [ScreenCapture] Release: releasing IDXGIOutputDuplication\n";
+        duplication_.Reset();
+    }
     context_.Reset();
     device_.Reset();
 }

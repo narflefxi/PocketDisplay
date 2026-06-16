@@ -398,6 +398,9 @@ int main(int argc, char* argv[]) {
         ResetColor();
 
         // Stop existing session before creating the new one.
+        // CRITICAL: We must be the sole owner of old_sess so that .reset()
+        // actually runs the destructor (releasing IDXGIOutputDuplication).
+        // The main loop is written to never hold a long-lived shared_ptr copy.
         std::shared_ptr<Session> old_sess;
         {
             std::lock_guard<std::mutex> lk(session_mu);
@@ -405,13 +408,19 @@ int main(int argc, char* argv[]) {
         }
         if (old_sess) {
             SetColor(YELLOW);
-            std::cout << "  [HELLO] Stopping previous session...\n";
+            std::cout << "  [HELLO] Stopping previous session (use_count="
+                      << old_sess.use_count() << ")...\n";
             ResetColor();
             old_sess->Stop();
-            old_sess.reset();
-            // Brief pause so the OS fully releases the DXGI duplication handle
-            // before the new session calls DuplicateOutput.
-            Sleep(100);
+            // Verify we are sole owner — if not, the old ScreenCapture won't
+            // be destroyed and DuplicateOutput will fail with E_INVALIDARG.
+            if (old_sess.use_count() != 1) {
+                std::cerr << "  [HELLO] WARNING: old session use_count="
+                          << old_sess.use_count()
+                          << " (expected 1) — other reference keeping it alive!\n";
+            }
+            old_sess.reset();  // destructor runs HERE — releases DXGI duplication
+            std::cout << "  [HELLO] Previous session fully destroyed.\n";
         }
 
         const bool is_usb = (peer == "127.0.0.1");
@@ -544,23 +553,33 @@ int main(int argc, char* argv[]) {
     strncpy_s(g_gui.statusMsg, "Waiting for connection\u2026", 255);
 
     // â”€â”€ Main wait loop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // IMPORTANT: Never hold a shared_ptr<Session> copy outside the lock.
+    // The HELLO callback must be the sole owner when it destroys the old
+    // session so that IDXGIOutputDuplication is released before DuplicateOutput.
     while (g_running) {
         Sleep(100);
-        std::shared_ptr<Session> sess;
+        bool ended = false;
         {
             std::lock_guard<std::mutex> lk(session_mu);
-            sess = current_session;
+            if (current_session && !current_session->IsRunning())
+                ended = true;
         }
-        if (sess && !sess->IsRunning()) {
+        if (ended) {
             SetColor(YELLOW);
             std::cout << "\n  [Main] Session ended \u2014 waiting for reconnect...\n";
             ResetColor();
-            sess->Stop();
+            // Move out under lock, then destroy outside lock.
+            // Re-check under lock: HELLO callback may have already swapped in a new session.
+            std::shared_ptr<Session> dying;
             {
                 std::lock_guard<std::mutex> lk(session_mu);
-                current_session.reset();
+                if (current_session && !current_session->IsRunning())
+                    dying = std::move(current_session);
             }
-            sess.reset();  // fully destroy Session (releases DXGI duplication)
+            if (dying) {
+                dying->Stop();
+                dying.reset();  // destructor runs — releases DXGI duplication
+            }
             g_gui.connected.store(false);
             strncpy_s(g_gui.statusMsg, "Disconnected \u2014 waiting\u2026", 255);
         }
