@@ -44,6 +44,7 @@ private:
     void DrainOutput();
     void BgraToNv12(const uint8_t* bgra, uint8_t* nv12) const;
     Microsoft::WRL::ComPtr<IMFSample> MakeNv12Sample(const uint8_t* bgra, int64_t pts_us);
+    bool PrimeEncoder();  // Feed black frame at init to extract SPS/PPS
 
     Microsoft::WRL::ComPtr<IMFTransform>          encoder_;
     Microsoft::WRL::ComPtr<IMFMediaEventGenerator> event_gen_;
@@ -68,7 +69,8 @@ private:
     std::thread       event_thread_;
 
     std::vector<uint8_t> sps_pps_cache_;
-    bool                 sps_pps_found_ = false;
-    bool                 is_hardware_   = false;
-    bool                 is_async_        = false;  // true=ASYNC MFT (event-driven), false=SYNC (direct)
+    bool                 sps_pps_found_       = false;
+    bool                 is_hardware_         = false;
+    bool                 is_async_            = false;  // true=ASYNC MFT (event-driven), false=SYNC (direct)
+    bool                 first_keyframe_done_ = false;  // Defense: track if SPS/PPS prepended to first IDR
 };

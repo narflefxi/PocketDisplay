@@ -61,6 +61,12 @@ The app is intended for commercial sale. All bundled assets and dependencies mus
 - **Housekeeping**: consolidate `PROJECT_CONTEXT.md` into `CLAUDE.md`; delete merged branches.
 
 ## Recently Fixed
+- **Media Foundation config-at-init deadlock (Android black screen)** ✅
+  - **Root cause**: `Session::StreamLoop` skips capture while `!android_ready_`, so it never feeds the encoder. `android_ready_` only becomes true after Android ACKs the codec config (SPS/PPS), which Session sends via `encoder_->GetConfigPacket()`. The old x264 encoder produced SPS/PPS at `Initialize()` (via `x264_encoder_headers`), so `GetConfigPacket()` returned valid data immediately and the handshake completed. But HwEncoder (MF/NVENC) only produces SPS/PPS AFTER the first frame is encoded — which never happens because the loop won't feed frames until `android_ready_`. Deadlock → encoder fires NeedInput #1 then idles forever → black screen on BOTH NVENC and software MFT.
+  - **Fix (surgical, preserves handshake)**: Added `PrimeEncoder()` method that feeds a single black NV12 frame (luma=0x10, chroma=0x80) at the end of `Initialize()`, pumps `ProcessInput`/`ProcessOutput` (handles ASYNC vs SYNC paths) until `MF_MT_MPEG_SEQUENCE_HEADER` or inline SPS/PPS is produced and cached. The primed output frame is discarded (not sent). After this, `GetConfigPacket()` returns SPS/PPS synchronously, matching the old x264 contract. `pts_` is reset to 0 so the first REAL frame starts clean.
+  - **Defense-in-depth**: First real keyframe has SPS/PPS prepended in-band (Annex-B: SPS, PPS, then IDR) so Android can configure even if csd-0 timing is off. Tracked via `first_keyframe_done_` flag.
+  - **Verification logging**: `[Prime] Black frame submitted`, `[Prime] SPS/PPS extracted`, `[Prime] SUCCESS`, `[PIPE] First keyframe: prepended SPS/PPS in-band`.
+  - Changed files: `windows/src/HwEncoder.cpp`, `windows/src/HwEncoder.h`.
 - **Media Foundation black screen fix — SYNC vs ASYNC MFT** ✅
   - **Root cause**: The code assumed all MFTs are ASYNC (event-driven), but the **software H.264 MFT is SYNCHRONOUS** and does NOT fire `METransformNeedInput`/`METransformHaveOutput` events. The encoder was being "driven" incorrectly, resulting in zero output frames.
   - **Fix**: Detect `MF_TRANSFORM_ASYNC` on the MFT during initialization:

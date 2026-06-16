@@ -485,6 +485,19 @@ bool HwEncoder::Initialize(int width, int height, int fps, int bitrate_kbps) {
         std::cout << "      SYNC MFT: no event thread (direct ProcessInput/ProcessOutput)\n";
     }
 
+    // ── PRIME ENCODER: produce SPS/PPS at init to break handshake deadlock ──
+    // The old x264 encoder produced SPS/PPS at Initialize() (x264_encoder_headers).
+    // MF encoders only produce SPS/PPS after encoding the first frame.
+    // Session::StreamLoop skips capture while !android_ready_, and android_ready_
+    // only becomes true after Android ACKs codec config. Deadlock: no frames → no SPS/PPS.
+    // Fix: Prime the encoder with a black frame, extract SPS/PPS, discard output.
+    std::cout << "      Priming encoder to extract SPS/PPS at init...\n";
+    if (!PrimeEncoder()) {
+        std::cerr << "      WARNING: Encoder priming failed - SPS/PPS may not be available immediately\n";
+    } else {
+        std::cout << "      Encoder primed successfully, SPS/PPS available\n";
+    }
+
     return true;
 }
 
@@ -494,6 +507,155 @@ bool HwEncoder::GetConfigPacket(std::vector<uint8_t>& sps_pps_out) {
         return true;
     }
     // Not available yet — caller should retry after first keyframe
+    return false;
+}
+
+// ── Encoder priming: feed black frame to extract SPS/PPS at init ─────────────
+
+bool HwEncoder::PrimeEncoder() {
+    // Create a black NV12 frame: luma=0x10 (video black), chroma=0x80 (neutral)
+    const size_t nv12_size = static_cast<size_t>(width_ * height_ * 3 / 2);
+    std::vector<uint8_t> black_nv12(nv12_size, 0);
+    // Y plane: 0x10 (video black level for limited range)
+    std::fill(black_nv12.begin(), black_nv12.begin() + width_ * height_, static_cast<uint8_t>(0x10));
+    // UV plane: 0x80 (neutral chroma)
+    std::fill(black_nv12.begin() + width_ * height_, black_nv12.end(), static_cast<uint8_t>(0x80));
+
+    // Create MF sample from black NV12
+    ComPtr<IMFMediaBuffer> media_buf;
+    if (FAILED(MFCreateMemoryBuffer(static_cast<DWORD>(nv12_size), &media_buf))) {
+        std::cerr << "[Prime] MFCreateMemoryBuffer failed\n";
+        return false;
+    }
+
+    BYTE* ptr = nullptr;
+    if (FAILED(media_buf->Lock(&ptr, nullptr, nullptr))) {
+        std::cerr << "[Prime] Lock failed\n";
+        return false;
+    }
+    memcpy(ptr, black_nv12.data(), nv12_size);
+    media_buf->Unlock();
+    media_buf->SetCurrentLength(static_cast<DWORD>(nv12_size));
+
+    ComPtr<IMFSample> sample;
+    if (FAILED(MFCreateSample(&sample))) {
+        std::cerr << "[Prime] MFCreateSample failed\n";
+        return false;
+    }
+    sample->AddBuffer(media_buf.Get());
+
+    // Set timestamp (0) and duration for priming frame
+    LONGLONG duration_100ns = fps_ > 0 ? (10'000'000LL / fps_) : 1666667;
+    sample->SetSampleTime(0);
+    sample->SetSampleDuration(duration_100ns);
+
+    // Feed the priming frame
+    HRESULT hr = encoder_->ProcessInput(0, sample.Get(), 0);
+    if (FAILED(hr)) {
+        std::cerr << "[Prime] ProcessInput failed hr=0x" << std::hex << hr << std::dec << "\n";
+        return false;
+    }
+    std::cout << "[Prime] Black frame submitted, pumping for SPS/PPS...\n";
+
+    // Pump output until SPS/PPS is found or timeout
+    const auto start = std::chrono::steady_clock::now();
+    const auto timeout = std::chrono::seconds(2);
+    int pump_count = 0;
+
+    while (!sps_pps_found_ && std::chrono::steady_clock::now() - start < timeout) {
+        MFT_OUTPUT_DATA_BUFFER out_buf = {};
+        DWORD status = 0;
+        HRESULT hr_out = encoder_->ProcessOutput(0, 1, &out_buf, &status);
+        ++pump_count;
+
+        if (hr_out == MF_E_TRANSFORM_STREAM_CHANGE) {
+            // Extract SPS/PPS from MF_MT_MPEG_SEQUENCE_HEADER
+            ComPtr<IMFMediaType> mt;
+            if (SUCCEEDED(encoder_->GetOutputCurrentType(0, &mt))) {
+                UINT32 blob_size = 0;
+                UINT8 blob_buf[1024] = {};
+                HRESULT hr_blob = mt->GetBlob(MF_MT_MPEG_SEQUENCE_HEADER, blob_buf, sizeof(blob_buf), &blob_size);
+                if (SUCCEEDED(hr_blob) && blob_size > 0) {
+                    std::vector<uint8_t> annexb;
+                    if (ConvertAvccToAnnexB(blob_buf, blob_size, annexb)) {
+                        sps_pps_cache_ = std::move(annexb);
+                        sps_pps_found_ = true;
+                        LogHex("[Prime] SPS/PPS extracted from STREAM_CHANGE: ", sps_pps_cache_.data(), sps_pps_cache_.size());
+                    }
+                }
+            }
+            if (out_buf.pSample) out_buf.pSample->Release();
+            if (out_buf.pEvents) out_buf.pEvents->Release();
+            break;
+        }
+
+        if (hr_out == MF_E_TRANSFORM_NEED_MORE_INPUT) {
+            // Need more input - but we only have one priming frame
+            break;
+        }
+
+        if (FAILED(hr_out)) {
+            if (pump_count <= 5) {
+                std::cerr << "[Prime] ProcessOutput failed hr=0x" << std::hex << hr_out << std::dec << "\n";
+            }
+            break;
+        }
+
+        if (out_buf.pSample) {
+            // Process output to check for inline SPS/PPS
+            ComPtr<IMFMediaBuffer> buf;
+            out_buf.pSample->ConvertToContiguousBuffer(&buf);
+            out_buf.pSample->Release();
+
+            BYTE* data = nullptr; DWORD len = 0;
+            if (SUCCEEDED(buf->Lock(&data, nullptr, &len))) {
+                std::vector<uint8_t> raw_data(data, data + len);
+                buf->Unlock();
+
+                std::vector<uint8_t> nal_data;
+                if (!ConvertAvccToAnnexB(raw_data.data(), raw_data.size(), nal_data)) {
+                    nal_data = std::move(raw_data);
+                }
+
+                // Check for SPS/PPS inline
+                if (!sps_pps_found_) {
+                    bool has_idr = false;
+                    if (ParseSpsPps(nal_data.data(), nal_data.size(), sps_pps_cache_, has_idr)) {
+                        sps_pps_found_ = true;
+                        LogHex("[Prime] SPS/PPS found inline: ", sps_pps_cache_.data(), sps_pps_cache_.size());
+                    }
+                }
+            }
+            // Discard the primed output (do not send)
+        }
+
+        if (out_buf.pEvents) out_buf.pEvents->Release();
+
+        // Small delay for ASYNC MFTs to process
+        if (!sps_pps_found_) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+
+    // For ASYNC MFTs, also pump via EventLoop if needed
+    if (is_async_ && !sps_pps_found_) {
+        // Give EventLoop time to process (it runs on its own thread)
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        // Check again if SPS/PPS was found via the event loop
+        if (sps_pps_found_) {
+            std::cout << "[Prime] SPS/PPS found via EventLoop\n";
+        }
+    }
+
+    // Reset pts_ so first REAL frame starts clean (frame 0)
+    pts_ = 0;
+
+    if (sps_pps_found_) {
+        std::cout << "[Prime] SUCCESS: SPS/PPS cached (" << sps_pps_cache_.size() << " bytes) after " << pump_count << " pumps\n";
+        return true;
+    }
+
+    std::cerr << "[Prime] FAILED: SPS/PPS not found after " << pump_count << " pumps\n";
     return false;
 }
 
@@ -641,6 +803,21 @@ bool HwEncoder::EncodeFrame(const uint8_t* bgra,
         }
     }
 
+    // Defense-in-depth: prepend SPS/PPS in-band to first keyframe
+    // This ensures Android can configure even if csd-0 timing is off
+    if (is_keyframe && !first_keyframe_done_ && sps_pps_found_ && !sps_pps_cache_.empty()) {
+        std::vector<uint8_t> with_spspps;
+        with_spspps.reserve(sps_pps_cache_.size() + nal_out.size());
+        with_spspps.insert(with_spspps.end(), sps_pps_cache_.begin(), sps_pps_cache_.end());
+        with_spspps.insert(with_spspps.end(), nal_out.begin(), nal_out.end());
+        nal_out = std::move(with_spspps);
+        first_keyframe_done_ = true;
+        if (call_num <= 5) {
+            std::cout << "[PIPE] First keyframe: prepended SPS/PPS in-band ("
+                      << sps_pps_cache_.size() << " + original bytes)\n";
+        }
+    }
+
     // Diagnostic logging: config packet and first 5 frames
     if (call_num <= 5) {
         std::cout << "[PIPE] EncodeFrame #" << call_num
@@ -674,6 +851,7 @@ void HwEncoder::Close() {
     pts_ = 0;
     sps_pps_found_ = false;
     is_hardware_ = false;
+    first_keyframe_done_ = false;
 
     // Note: Pipeline counters (s_encode_calls, s_process_input_calls, etc.)
     // are reset in Initialize(), not here, to preserve diagnostic data between sessions.
