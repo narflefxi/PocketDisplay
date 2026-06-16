@@ -50,6 +50,7 @@ private:
 
     int     width_  = 0;
     int     height_ = 0;
+    int     fps_    = 60;  // Frame rate for timestamp calculation
     int64_t pts_    = 0;
 
     // Thread-safe output queue
@@ -69,4 +70,5 @@ private:
     std::vector<uint8_t> sps_pps_cache_;
     bool                 sps_pps_found_ = false;
     bool                 is_hardware_   = false;
+    bool                 is_async_        = false;  // true=ASYNC MFT (event-driven), false=SYNC (direct)
 };

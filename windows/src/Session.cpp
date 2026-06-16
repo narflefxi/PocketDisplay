@@ -312,7 +312,20 @@ void Session::StreamLoop() {
         if (!android_ready_.load()) continue;
 
         int w = 0, h = 0;
-        if (!capture_.CaptureFrame(bgra_buf, w, h)) continue;
+        static std::atomic<int> capture_count{0};
+        int cap_n = capture_count.fetch_add(1) + 1;
+        if (cap_n <= 5) {
+            std::cout << "[PIPE] captured frame " << cap_n << " (" << w << "x" << h << ")\n";
+        }
+
+        if (!capture_.CaptureFrame(bgra_buf, w, h)) {
+            if (cap_n <= 5) std::cerr << "[PIPE] CaptureFrame failed\n";
+            continue;
+        }
+        // Log actual dimensions after capture
+        if (cap_n <= 5) {
+            std::cout << "[PIPE] captured frame " << cap_n << " actual (" << w << "x" << h << ")\n";
+        }
 
         const int cur_sw = stream_w_.load();
         const int cur_sh = stream_h_.load();
@@ -356,13 +369,43 @@ void Session::StreamLoop() {
         }
 
         bool is_keyframe = false;
-        if (!encoder_->EncodeFrame(bgra_buf.data(), nal_buf, is_keyframe)) continue;
-        if (nal_buf.empty()) continue;
+        static std::atomic<int> encode_call_count{0};
+        int ec_n = encode_call_count.fetch_add(1) + 1;
+        if (ec_n <= 5) {
+            std::cout << "[PIPE] calling EncodeFrame " << ec_n << "\n";
+        }
+
+        if (!encoder_->EncodeFrame(bgra_buf.data(), nal_buf, is_keyframe)) {
+            if (ec_n <= 5) std::cerr << "[PIPE] EncodeFrame returned FALSE\n";
+            continue;
+        }
+
+        if (ec_n <= 5) {
+            std::cout << "[PIPE] EncodeFrame returned nal=" << nal_buf.size()
+                      << " keyframe=" << (is_keyframe ? "y" : "n") << "\n";
+        }
+
+        if (nal_buf.empty()) {
+            if (ec_n <= 5) std::cout << "[PIPE] nal_buf empty (pipelining)\n";
+            continue;
+        }
 
         const uint8_t flags = is_keyframe ? pocketdisplay::FLAG_KEYFRAME
                                            : pocketdisplay::FLAG_NONE;
-        if (cfg_.streamer &&
-            !cfg_.streamer->SendFrame(nal_buf.data(), nal_buf.size(), frame_id++, flags)) {
+        bool send_ok = true;
+        if (cfg_.streamer) {
+            send_ok = cfg_.streamer->SendFrame(nal_buf.data(), nal_buf.size(), frame_id++, flags);
+            static std::atomic<int> send_count{0};
+            int send_n = send_count.fetch_add(1) + 1;
+            if (send_n <= 5 || !send_ok) {
+                std::cout << "[PIPE] sent " << nal_buf.size() << " bytes to socket"
+                          << " (frame " << send_n << ")\n";
+            }
+        }
+        if (!send_ok) {
+            static std::atomic<int> send_error_count{0};
+            int err_n = send_error_count.fetch_add(1) + 1;
+            std::cerr << "[PIPE] ERROR send failed (" << err_n << " total errors)\n";
             std::cout << "  [Session] SendFrame failed \u2014 client disconnected.\n";
             running_.store(false);
             break;

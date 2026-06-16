@@ -17,6 +17,17 @@
 
 using Microsoft::WRL::ComPtr;
 
+// ── Pipeline instrumentation counters ─────────────────────────────────────────
+static std::atomic<int> s_captured_frames{0};
+static std::atomic<int> s_encode_calls{0};
+static std::atomic<int> s_encode_outputs{0};
+static std::atomic<int> s_sent_bytes{0};
+static std::atomic<int> s_send_errors{0};
+static std::atomic<int> s_need_input_events{0};
+static std::atomic<int> s_have_output_events{0};
+static std::atomic<int> s_process_input_calls{0};
+static std::atomic<int> s_process_output_calls{0};
+
 // ── Diagnostic logging helpers ────────────────────────────────────────────────
 
 static void LogHex(const std::string& prefix, const uint8_t* data, size_t len) {
@@ -139,59 +150,129 @@ ComPtr<IMFSample> HwEncoder::MakeNv12Sample(const uint8_t* bgra, int64_t pts_us)
     const size_t nv12_size = static_cast<size_t>(width_ * height_ * 3 / 2);
 
     ComPtr<IMFMediaBuffer> media_buf;
-    if (FAILED(MFCreateMemoryBuffer(static_cast<DWORD>(nv12_size), &media_buf)))
+    if (FAILED(MFCreateMemoryBuffer(static_cast<DWORD>(nv12_size), &media_buf))) {
+        std::cerr << "[PIPE] MakeNv12Sample: MFCreateMemoryBuffer failed\n";
         return nullptr;
+    }
 
-    BYTE* ptr = nullptr; DWORD max_len = 0;
-    if (FAILED(media_buf->Lock(&ptr, &max_len, nullptr))) return nullptr;
+    BYTE* ptr = nullptr; DWORD max_len = 0, cur_len = 0;
+    if (FAILED(media_buf->Lock(&ptr, &max_len, &cur_len))) {
+        std::cerr << "[PIPE] MakeNv12Sample: Lock failed\n";
+        return nullptr;
+    }
 
     BgraToNv12(bgra, ptr);
     media_buf->Unlock();
     media_buf->SetCurrentLength(static_cast<DWORD>(nv12_size));
 
     ComPtr<IMFSample> sample;
-    if (FAILED(MFCreateSample(&sample))) return nullptr;
+    if (FAILED(MFCreateSample(&sample))) {
+        std::cerr << "[PIPE] MakeNv12Sample: MFCreateSample failed\n";
+        return nullptr;
+    }
     sample->AddBuffer(media_buf.Get());
-    sample->SetSampleTime(pts_us * 10);   // 100-ns units
-    sample->SetSampleDuration(0);
+
+    // Set timestamp and duration (critical for NVENC)
+    // Duration: 1/60fps = 1666667 * 100ns units
+    LONGLONG timestamp_100ns = pts_us * 10;
+    LONGLONG duration_100ns = fps_ > 0 ? (10'000'000LL / fps_) : 1666667;
+    sample->SetSampleTime(timestamp_100ns);
+    sample->SetSampleDuration(duration_100ns);
+
+    // Log first 5 samples for diagnostics
+    int sample_num = s_process_input_calls.load();
+    if (sample_num < 5) {
+        std::cout << "[PIPE] MakeNv12Sample: pts=" << pts_us << "us (" << timestamp_100ns
+                  << " *100ns), duration=" << duration_100ns
+                  << " *100ns, size=" << nv12_size << " (expected " << nv12_size << ")\n";
+    }
+
     return sample;
 }
 
 // ── Async event loop (runs on event_thread_) ─────────────────────────────────
 
 void HwEncoder::EventLoop() {
+    int need_input_count = 0;
+    int have_output_count = 0;
+    int other_count = 0;
+
     while (running_) {
         ComPtr<IMFMediaEvent> event;
         HRESULT hr = event_gen_->GetEvent(0, &event);   // blocking
-        if (FAILED(hr)) break;
+        if (FAILED(hr)) {
+            std::cerr << "[PIPE] EventLoop: GetEvent failed hr=0x" << std::hex << hr << std::dec << "\n";
+            break;
+        }
 
         MediaEventType type = MEUnknown;
         event->GetType(&type);
 
+        // Count events and log first few of each type
         if (type == METransformNeedInput) {
+            s_need_input_events.fetch_add(1);
+            int cnt = ++need_input_count;
+            if (cnt <= 5) {
+                std::cout << "[PIPE] EventLoop: METransformNeedInput #" << cnt << "\n";
+            }
+
             std::unique_lock<std::mutex> lk(input_mutex_);
             if (!pending_samples_.empty()) {
                 auto sample = pending_samples_.front();
                 pending_samples_.pop();
                 lk.unlock();
-                encoder_->ProcessInput(0, sample.Get(), 0);
+                int pi_cnt = s_process_input_calls.fetch_add(1) + 1;
+                HRESULT hr_pi = encoder_->ProcessInput(0, sample.Get(), 0);
+                if (pi_cnt <= 5) {
+                    std::cout << "[PIPE] ProcessInput #" << pi_cnt << " hr=0x" << std::hex << hr_pi << std::dec << "\n";
+                }
+                if (FAILED(hr_pi) && pi_cnt <= 5) {
+                    std::cerr << "[PIPE] ERROR ProcessInput #" << pi_cnt << " failed hr=0x" << std::hex << hr_pi << std::dec << "\n";
+                }
             } else {
                 needs_input_ = true;
                 lk.unlock();
                 needs_input_cv_.notify_one();
             }
         } else if (type == METransformHaveOutput) {
+            s_have_output_events.fetch_add(1);
+            int cnt = ++have_output_count;
+            if (cnt <= 5) {
+                std::cout << "[PIPE] EventLoop: METransformHaveOutput #" << cnt << "\n";
+            }
             DrainOutput();
+        } else {
+            // Log other event types for diagnostics
+            int cnt = ++other_count;
+            if (cnt <= 5) {
+                std::cout << "[PIPE] EventLoop: other event type=" << type << " (count=" << cnt << ")\n";
+            }
         }
     }
+
+    // Log final event counts
+    std::cout << "[PIPE] EventLoop exiting: NeedInput=" << need_input_count
+              << " HaveOutput=" << have_output_count
+              << " Other=" << other_count << "\n";
 }
 
 void HwEncoder::DrainOutput() {
     MFT_OUTPUT_DATA_BUFFER out_buf = {};
     DWORD status = 0;
 
+    int po_cnt = s_process_output_calls.fetch_add(1) + 1;
     // Some hardware MFTs allocate their own output samples
     HRESULT hr = encoder_->ProcessOutput(0, 1, &out_buf, &status);
+
+    // Log first 5 calls and their results
+    if (po_cnt <= 5) {
+        std::cout << "[PIPE] ProcessOutput #" << po_cnt << " hr=0x" << std::hex << hr << std::dec;
+        if (hr == MF_E_TRANSFORM_STREAM_CHANGE) std::cout << " (STREAM_CHANGE)";
+        else if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT) std::cout << " (NEED_MORE_INPUT)";
+        else if (SUCCEEDED(hr)) std::cout << " (OK)";
+        std::cout << "\n";
+    }
+
     if (hr == MF_E_TRANSFORM_STREAM_CHANGE) {
         // Output type changed — extract SPS/PPS from MF_MT_MPEG_SEQUENCE_HEADER
         // This is where MF encoders store the codec config data
@@ -212,7 +293,12 @@ void HwEncoder::DrainOutput() {
         }
         return;
     }
-    if (FAILED(hr)) return;
+    if (FAILED(hr)) {
+        if (po_cnt <= 5 && hr != MF_E_TRANSFORM_NEED_MORE_INPUT) {
+            std::cerr << "[PIPE] ERROR ProcessOutput #" << po_cnt << " failed hr=0x" << std::hex << hr << std::dec << "\n";
+        }
+        return;
+    }
 
     if (out_buf.pSample) {
         ComPtr<IMFMediaBuffer> media_buf;
@@ -244,6 +330,7 @@ void HwEncoder::DrainOutput() {
         {
             std::lock_guard<std::mutex> lk(output_mutex_);
             output_queue_.push(std::move(nal_data));
+            s_encode_outputs.fetch_add(1);
         }
         output_cv_.notify_one();
     }
@@ -256,7 +343,18 @@ void HwEncoder::DrainOutput() {
 bool HwEncoder::Initialize(int width, int height, int fps, int bitrate_kbps) {
     width_  = width;
     height_ = height;
+    fps_    = fps;
     is_hardware_ = false;
+    is_async_    = false;
+
+    // Reset pipeline counters
+    s_captured_frames.store(0);
+    s_encode_calls.store(0);
+    s_encode_outputs.store(0);
+    s_need_input_events.store(0);
+    s_have_output_events.store(0);
+    s_process_input_calls.store(0);
+    s_process_output_calls.store(0);
 
     if (FAILED(MFStartup(MF_VERSION))) return false;
 
@@ -274,9 +372,10 @@ bool HwEncoder::Initialize(int width, int height, int fps, int bitrate_kbps) {
     if (count == 0) {
         std::cout << "      No hardware H.264 encoder found, trying software MFT...\n";
 
-        // Try software MFT (non-GPL fallback) - omit HARDWARE flag to get software encoders
+        // Try software MFT (non-GPL fallback) - omit HARDWARE and ASYNCMFT flags
+        // Software H.264 MFT is SYNCHRONOUS - it does NOT fire NeedInput/HaveOutput events
         MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER,
-                  MFT_ENUM_FLAG_ASYNCMFT | MFT_ENUM_FLAG_SORTANDFILTER,
+                  MFT_ENUM_FLAG_SORTANDFILTER,  // No ASYNCMFT flag
                   &in_type, &out_type, &activates, &count);
 
         if (count == 0) {
@@ -303,13 +402,28 @@ bool HwEncoder::Initialize(int width, int height, int fps, int bitrate_kbps) {
     CoTaskMemFree(activates);
     if (FAILED(hr)) { MFShutdown(); return false; }
 
-    // Unlock async transform
+    // Detect ASYNC vs SYNC MFT (CRITICAL for correct driving model)
     ComPtr<IMFAttributes> attrs;
+    UINT32 is_async_mft = 0;
     encoder_->GetAttributes(&attrs);
-    if (attrs) attrs->SetUINT32(MF_TRANSFORM_ASYNC_UNLOCK, TRUE);
+    if (attrs) {
+        attrs->SetUINT32(MF_TRANSFORM_ASYNC_UNLOCK, TRUE);
+        attrs->GetUINT32(MF_TRANSFORM_ASYNC, &is_async_mft);
+    }
+    is_async_ = (is_async_mft != 0);
+    std::cout << "      MFT type: " << (is_async_ ? "ASYNC (event-driven)" : "SYNC (direct loop)") << "\n";
 
-    hr = encoder_.As(&event_gen_);
-    if (FAILED(hr)) { MFShutdown(); return false; }
+    // For ASYNC MFTs, get the event generator. SYNC MFTs don't have one.
+    if (is_async_) {
+        hr = encoder_.As(&event_gen_);
+        if (FAILED(hr)) {
+            std::cerr << "      ERROR: Failed to get IMFMediaEventGenerator from async MFT\n";
+            MFShutdown();
+            return false;
+        }
+    } else {
+        event_gen_.Reset();  // Ensure no event generator for SYNC MFTs
+    }
 
     // Set output type FIRST (required for hardware encoders)
     ComPtr<IMFMediaType> mt_out;
@@ -362,7 +476,15 @@ bool HwEncoder::Initialize(int width, int height, int fps, int bitrate_kbps) {
     }
 
     running_ = true;
-    event_thread_ = std::thread(&HwEncoder::EventLoop, this);
+
+    // Only start event loop for ASYNC MFTs. SYNC MFTs are driven directly in EncodeFrame.
+    if (is_async_) {
+        event_thread_ = std::thread(&HwEncoder::EventLoop, this);
+        std::cout << "      Event thread started for ASYNC MFT\n";
+    } else {
+        std::cout << "      SYNC MFT: no event thread (direct ProcessInput/ProcessOutput)\n";
+    }
+
     return true;
 }
 
@@ -375,34 +497,133 @@ bool HwEncoder::GetConfigPacket(std::vector<uint8_t>& sps_pps_out) {
     return false;
 }
 
-// Diagnostic logging state (static to track across calls)
-static std::atomic<int> s_frame_counter{0};
-static std::atomic<bool> s_config_logged{false};
-
 bool HwEncoder::EncodeFrame(const uint8_t* bgra,
                               std::vector<uint8_t>& nal_out,
                               bool& is_keyframe) {
-    auto sample = MakeNv12Sample(bgra, pts_++);
-    if (!sample) return false;
+    int call_num = s_encode_calls.fetch_add(1) + 1;
 
-    {
+    // Log first 5 calls
+    if (call_num <= 5) {
+        std::cout << "[PIPE] EncodeFrame call #" << call_num << " pts=" << pts_ << "\n";
+    }
+
+    auto sample = MakeNv12Sample(bgra, pts_++);
+    if (!sample) {
+        if (call_num <= 5) std::cerr << "[PIPE] MakeNv12Sample failed\n";
+        return false;
+    }
+
+    // ASYNC MFT: queue sample for EventLoop, wait for output
+    // SYNC MFT: drive ProcessInput/ProcessOutput directly
+    if (is_async_) {
+        // ASYNC path: use event-driven model
         std::unique_lock<std::mutex> lk(input_mutex_);
         if (needs_input_) {
             needs_input_ = false;
             lk.unlock();
-            encoder_->ProcessInput(0, sample.Get(), 0);
+            int pi_cnt = s_process_input_calls.fetch_add(1) + 1;
+            HRESULT hr = encoder_->ProcessInput(0, sample.Get(), 0);
+            if (call_num <= 5) {
+                std::cout << "[PIPE] ASYNC ProcessInput #" << pi_cnt << " hr=0x" << std::hex << hr << std::dec << "\n";
+            }
         } else {
             pending_samples_.push(sample);
+            if (call_num <= 5) {
+                std::cout << "[PIPE] ASYNC: sample queued (queue size=" << pending_samples_.size() << ")\n";
+            }
+        }
+    } else {
+        // SYNC path: direct ProcessInput call
+        int pi_cnt = s_process_input_calls.fetch_add(1) + 1;
+        HRESULT hr = encoder_->ProcessInput(0, sample.Get(), 0);
+        if (call_num <= 5) {
+            std::cout << "[PIPE] SYNC ProcessInput #" << pi_cnt << " hr=0x" << std::hex << hr << std::dec << "\n";
+        }
+        if (FAILED(hr) && call_num <= 5) {
+            std::cerr << "[PIPE] ERROR SYNC ProcessInput failed hr=0x" << std::hex << hr << std::dec << "\n";
+        }
+
+        // Immediately drain output (SYNC MFT doesn't emit events)
+        // May need multiple calls to drain all output
+        for (int drain_attempt = 0; drain_attempt < 5; ++drain_attempt) {
+            MFT_OUTPUT_DATA_BUFFER out_buf = {};
+            DWORD status = 0;
+            int po_cnt = s_process_output_calls.fetch_add(1) + 1;
+            HRESULT hr_out = encoder_->ProcessOutput(0, 1, &out_buf, &status);
+
+            if (call_num <= 5 && drain_attempt == 0) {
+                std::cout << "[PIPE] SYNC ProcessOutput #" << po_cnt << " drain_attempt=" << drain_attempt
+                          << " hr=0x" << std::hex << hr_out << std::dec;
+                if (hr_out == MF_E_TRANSFORM_NEED_MORE_INPUT) std::cout << " (NEED_MORE_INPUT)";
+                else if (hr_out == MF_E_TRANSFORM_STREAM_CHANGE) std::cout << " (STREAM_CHANGE)";
+                else if (SUCCEEDED(hr_out)) std::cout << " (OK, sample=" << (out_buf.pSample ? "yes" : "no") << ")";
+                std::cout << "\n";
+            }
+
+            if (hr_out == MF_E_TRANSFORM_NEED_MORE_INPUT) {
+                break;  // No more output available
+            }
+            if (FAILED(hr_out)) {
+                if (hr_out != MF_E_TRANSFORM_STREAM_CHANGE && call_num <= 5) {
+                    std::cerr << "[PIPE] ERROR SYNC ProcessOutput failed hr=0x" << std::hex << hr_out << std::dec << "\n";
+                }
+                break;
+            }
+
+            if (out_buf.pSample) {
+                ComPtr<IMFMediaBuffer> media_buf;
+                out_buf.pSample->ConvertToContiguousBuffer(&media_buf);
+                out_buf.pSample->Release();
+
+                BYTE* data = nullptr; DWORD len = 0;
+                if (SUCCEEDED(media_buf->Lock(&data, nullptr, &len))) {
+                    std::vector<uint8_t> raw_data(data, data + len);
+                    media_buf->Unlock();
+
+                    // Convert AVCC to Annex-B
+                    std::vector<uint8_t> nal_data;
+                    if (!ConvertAvccToAnnexB(raw_data.data(), raw_data.size(), nal_data)) {
+                        nal_data = std::move(raw_data);
+                    }
+
+                    // Check for SPS/PPS
+                    if (!sps_pps_found_) {
+                        bool has_idr = false;
+                        if (ParseSpsPps(nal_data.data(), nal_data.size(), sps_pps_cache_, has_idr)) {
+                            sps_pps_found_ = true;
+                            LogHex("[HwEncoder] SPS/PPS found inline (SYNC): ", sps_pps_cache_.data(), sps_pps_cache_.size());
+                        }
+                    }
+
+                    // Add to output queue
+                    {
+                        std::lock_guard<std::mutex> lk(output_mutex_);
+                        output_queue_.push(std::move(nal_data));
+                        s_encode_outputs.fetch_add(1);
+                    }
+                    output_cv_.notify_one();
+
+                    if (call_num <= 5) {
+                        std::cout << "[PIPE] SYNC output queued (queue size=" << output_queue_.size() << ")\n";
+                    }
+                }
+            }
+
+            if (out_buf.pEvents) out_buf.pEvents->Release();
         }
     }
 
-    // Wait up to one frame time for output
+    // Wait up to one frame time for output (ASYNC path, or if SYNC just queued)
     std::unique_lock<std::mutex> out_lk(output_mutex_);
     output_cv_.wait_for(out_lk, std::chrono::milliseconds(33),
                         [this] { return !output_queue_.empty(); });
 
     if (output_queue_.empty()) {
         nal_out.clear();
+        is_keyframe = false;
+        if (call_num <= 5) {
+            std::cout << "[PIPE] EncodeFrame #" << call_num << " returned EMPTY (pipelining)\n";
+        }
         return true;   // Encoder is pipelining — output arrives next call
     }
 
@@ -421,20 +642,17 @@ bool HwEncoder::EncodeFrame(const uint8_t* bgra,
     }
 
     // Diagnostic logging: config packet and first 5 frames
-    int frame_num = s_frame_counter.fetch_add(1);
-
-    // Log config packet once when available
-    if (!s_config_logged.load() && sps_pps_found_) {
-        s_config_logged.store(true);
-        LogHex("[HwEncoder] Config packet (SPS/PPS): ", sps_pps_cache_.data(), sps_pps_cache_.size());
+    if (call_num <= 5) {
+        std::cout << "[PIPE] EncodeFrame #" << call_num
+                  << " output size=" << nal_out.size()
+                  << " keyframe=" << (is_keyframe ? "YES" : "no") << "\n";
     }
 
-    // Log first 5 output samples
-    if (frame_num < 5) {
-        std::cout << "[HwEncoder] Frame #" << frame_num
-                  << " size=" << nal_out.size()
-                  << " keyframe=" << (is_keyframe ? "YES" : "no") << "\n";
-        LogHex("[HwEncoder]   First bytes: ", nal_out.data(), std::min<size_t>(nal_out.size(), 16));
+    // Log config packet once when available (only for first few frames)
+    static std::atomic<bool> s_config_logged{false};
+    if (!s_config_logged.load() && sps_pps_found_ && call_num <= 10) {
+        s_config_logged.store(true);
+        LogHex("[HwEncoder] Config packet (SPS/PPS): ", sps_pps_cache_.data(), sps_pps_cache_.size());
     }
 
     return true;
@@ -457,7 +675,6 @@ void HwEncoder::Close() {
     sps_pps_found_ = false;
     is_hardware_ = false;
 
-    // Reset diagnostic counters for next session
-    s_frame_counter.store(0);
-    s_config_logged.store(false);
+    // Note: Pipeline counters (s_encode_calls, s_process_input_calls, etc.)
+    // are reset in Initialize(), not here, to preserve diagnostic data between sessions.
 }

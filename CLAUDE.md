@@ -61,6 +61,16 @@ The app is intended for commercial sale. All bundled assets and dependencies mus
 - **Housekeeping**: consolidate `PROJECT_CONTEXT.md` into `CLAUDE.md`; delete merged branches.
 
 ## Recently Fixed
+- **Media Foundation black screen fix — SYNC vs ASYNC MFT** ✅
+  - **Root cause**: The code assumed all MFTs are ASYNC (event-driven), but the **software H.264 MFT is SYNCHRONOUS** and does NOT fire `METransformNeedInput`/`METransformHaveOutput` events. The encoder was being "driven" incorrectly, resulting in zero output frames.
+  - **Fix**: Detect `MF_TRANSFORM_ASYNC` on the MFT during initialization:
+    - ASYNC MFTs (NVENC): Use event-driven model with `EventLoop` thread
+    - SYNC MFTs (software): Drive directly with `ProcessInput` followed by `ProcessOutput` drain loop in `EncodeFrame`
+  - **Timestamp fix**: Set both `SetSampleTime` AND `SetSampleDuration` in `MakeNv12Sample` (NVENC requires valid timestamps). Duration = 1/fps in 100ns units.
+  - **Pipeline instrumentation**: Added `[PIPE]` prefixed logging throughout:
+    - Session capture loop: `[PIPE] captured frame N`, `[PIPE] calling EncodeFrame N`, `[PIPE] EncodeFrame returned nal=<bytes>`, `[PIPE] sent N bytes to socket`
+    - HwEncoder: logs MFT type (ASYNC/SYNC), event counts, ProcessInput/ProcessOutput HRESULTs
+  - Changed files: `windows/src/HwEncoder.cpp`, `windows/src/HwEncoder.h`, `windows/src/Session.cpp`.
 - **Media Foundation bitstream fix (black screen issue)** ✅
   - **Root cause**: Media Foundation H.264 encoder outputs **AVCC format** (4-byte length-prefixed NALs), but Android MediaCodec expects **Annex-B format** (00 00 00 01 start codes).
   - **SPS/PPS extraction**: MF stores codec config in `MF_MT_MPEG_SEQUENCE_HEADER` attribute (after first `MF_E_TRANSFORM_STREAM_CHANGE`), NOT inline like x264. The code now reads this attribute and converts AVCC to Annex-B.
