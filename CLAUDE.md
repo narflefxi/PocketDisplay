@@ -50,14 +50,26 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 - Wireless adb + USB adb coexist: working (adb reverse uses -s <serial> to avoid multi-device error)
 - WiFi→USB hot-switch: working (Phase 4b — always-on USB monitor + Android probe retry)
 
-## Known Issues (Open)
-- #20: First-time setup requires too many manual steps (bug)
-- #8: Add custom resolution selection for streaming (enhancement)
-- #5: Connection not seamless on startup (bug)
-- #2: Find better cursor type for Android (enhancement)
-- #1: Cursor position mismatch on Android (touch vs mouse) (bug)
+## Licensing
+The app is intended for commercial sale. All bundled assets and dependencies must use permissive licenses (no GPL/copyleft, no CC-BY-SA).
+- **Cursor assets**: CC0 — safe.
+- **x264**: GPL-licensed — ⚠️ HIGH PRIORITY blocker for commercial release. Must either buy a commercial x264 license OR replace with a permissive encoder (Media Foundation, NVENC, AMF, or QuickSync) before selling.
+
+## Known Issues / Deferred
+- **Resize cursor detection fails in custom-cursor apps** (e.g. Claude Desktop) — Windows-side cursor-type detection only matches standard `IDC_SIZE*` handles. Deferred.
+- **VDD extended display (#20)** — true borderless extended display. Deferred.
+- **#8**: Add custom resolution selection for streaming (enhancement).
+- **#5**: Connection not seamless on startup (bug).
+- **Housekeeping**: consolidate `PROJECT_CONTEXT.md` into `CLAUDE.md`; delete merged branches.
 
 ## Recently Fixed
+- PR #24: Touch/cursor accuracy + Windows-style cursor shapes ✅
+  - Touch lands exactly at touch point (toNormalized inversion fix, feature/cursor-fixes).
+  - 11 Windows-style cursor shapes from CC0 SVG assets converted to VectorDrawables with per-type fractional hotspots in CursorOverlayView. Arrow hotspot at tip; hand hotspot at index fingertip (hx=0.397, hy=0.076); resize cursors centered.
+  - Hand cursor regenerated as solid silhouette (fillType nonZero). Resize_h and resize_v regenerated from new dedicated SVGs (resize_v bakes the SVG root rotate(90) into a group android:rotation).
+- PR #23: Extended-mode cursor hide + letterbox-fit + touch orientation + nav/About ✅
+  - Cursor overlay hides when PC cursor leaves the extended display region (sentinel type=0xFF).
+  - Letterbox-fit scaling with correct touch mapping; nav bar cleanup; About page.
 - Phase 4f: Disconnect button regression fix ✅
   - Root cause (regression from 4e): stopCurrentSession() always triggered an immediate tryConnect() (added in 4e for fast involuntary reconnect). Since both the Disconnect button and internal hot-switch paths called stopCurrentSession(), manual disconnect instantly auto-reconnected.
   - Fix: introduced @Volatile userDisconnected flag in ConnectionManager. Manual disconnect (Disconnect button / HUD Disconnect) calls the new userDisconnect() which sets userDisconnected=true before calling stopCurrentSession(). retryConnect() (Connect button) clears the flag. All 8 auto-reconnect paths are guarded: stopCurrentSession() immediate trigger, fallbackPollRunnable, onUsbConnected() probe, startWifiDiscovery() callback, tryConnect() main-thread post, onResume(), onSurfaceAvailable(), and onUsbDisconnected()→startWifiDiscovery().
