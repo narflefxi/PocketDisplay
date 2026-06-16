@@ -409,6 +409,9 @@ int main(int argc, char* argv[]) {
             ResetColor();
             old_sess->Stop();
             old_sess.reset();
+            // Brief pause so the OS fully releases the DXGI duplication handle
+            // before the new session calls DuplicateOutput.
+            Sleep(100);
         }
 
         const bool is_usb = (peer == "127.0.0.1");
@@ -557,7 +560,7 @@ int main(int argc, char* argv[]) {
                 std::lock_guard<std::mutex> lk(session_mu);
                 current_session.reset();
             }
-            sess.reset();
+            sess.reset();  // fully destroy Session (releases DXGI duplication)
             g_gui.connected.store(false);
             strncpy_s(g_gui.statusMsg, "Disconnected \u2014 waiting\u2026", 255);
         }

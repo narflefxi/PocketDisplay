@@ -1,23 +1,38 @@
 #include "ScreenCapture.h"
 #include <cstring>
 #include <stdexcept>
+#include <iostream>
+#include <thread>
+#include <chrono>
 
 ScreenCapture::~ScreenCapture() {
     Release();
 }
 
 bool ScreenCapture::Initialize(int adapter_idx, int output_idx) {
+    // Fully release any previous DXGI state first — Desktop Duplication allows
+    // only ONE active IDXGIOutputDuplication per output per process.
+    Release();
+
     adapter_idx_ = adapter_idx;
     output_idx_  = output_idx;
     // Use IDXGIFactory so adapter_idx is consistent with PickMonitor's enumeration.
     Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
     HRESULT hr = CreateDXGIFactory1(__uuidof(IDXGIFactory1),
                                     reinterpret_cast<void**>(factory.GetAddressOf()));
-    if (FAILED(hr)) return false;
+    if (FAILED(hr)) {
+        std::cerr << "  [ScreenCapture] CreateDXGIFactory1 failed hr=0x"
+                  << std::hex << hr << std::dec << "\n";
+        return false;
+    }
 
     Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
     hr = factory->EnumAdapters(adapter_idx, &adapter);
-    if (FAILED(hr)) return false;
+    if (FAILED(hr)) {
+        std::cerr << "  [ScreenCapture] EnumAdapters(" << adapter_idx
+                  << ") failed hr=0x" << std::hex << hr << std::dec << "\n";
+        return false;
+    }
 
     D3D_FEATURE_LEVEL feat_level;
     hr = D3D11CreateDevice(
@@ -25,15 +40,27 @@ bool ScreenCapture::Initialize(int adapter_idx, int output_idx) {
         0, nullptr, 0, D3D11_SDK_VERSION,
         &device_, &feat_level, &context_
     );
-    if (FAILED(hr)) return false;
+    if (FAILED(hr)) {
+        std::cerr << "  [ScreenCapture] D3D11CreateDevice failed hr=0x"
+                  << std::hex << hr << std::dec << "\n";
+        return false;
+    }
 
     Microsoft::WRL::ComPtr<IDXGIOutput> output;
     hr = adapter->EnumOutputs(output_idx, &output);
-    if (FAILED(hr)) return false;
+    if (FAILED(hr)) {
+        std::cerr << "  [ScreenCapture] EnumOutputs(" << output_idx
+                  << ") failed hr=0x" << std::hex << hr << std::dec << "\n";
+        return false;
+    }
 
     Microsoft::WRL::ComPtr<IDXGIOutput1> output1;
     hr = output.As(&output1);
-    if (FAILED(hr)) return false;
+    if (FAILED(hr)) {
+        std::cerr << "  [ScreenCapture] QueryInterface IDXGIOutput1 failed hr=0x"
+                  << std::hex << hr << std::dec << "\n";
+        return false;
+    }
 
     DXGI_OUTPUT_DESC desc = {};
     output->GetDesc(&desc);
@@ -45,8 +72,33 @@ bool ScreenCapture::Initialize(int adapter_idx, int output_idx) {
     width_  &= ~1;
     height_ &= ~1;
 
-    hr = output1->DuplicateOutput(device_.Get(), &duplication_);
-    if (FAILED(hr)) return false;
+    // DuplicateOutput with bounded retry — the OS may briefly hold the
+    // duplication handle after the previous session's Release().
+    static constexpr int kMaxRetries = 10;
+    static constexpr int kRetryMs    = 200;
+    for (int attempt = 0; attempt <= kMaxRetries; ++attempt) {
+        hr = output1->DuplicateOutput(device_.Get(), &duplication_);
+        if (SUCCEEDED(hr)) break;
+        // Transient errors where a retry may succeed once the old duplication
+        // handle is fully released by the OS:
+        //   E_INVALIDARG      (0x80070057) — "already duplicating this output"
+        //   E_ACCESSDENIED    (0x80070005) — secure desktop / transient lock
+        //   DXGI_ERROR_ACCESS_LOST          — desktop mode change
+        //   DXGI_ERROR_NOT_CURRENTLY_AVAILABLE — max concurrent duplications
+        const bool transient = (hr == E_INVALIDARG ||
+                                hr == E_ACCESSDENIED ||
+                                hr == DXGI_ERROR_ACCESS_LOST ||
+                                hr == DXGI_ERROR_NOT_CURRENTLY_AVAILABLE);
+        std::cerr << "  [ScreenCapture] DuplicateOutput attempt " << (attempt + 1)
+                  << "/" << (kMaxRetries + 1) << " failed hr=0x"
+                  << std::hex << hr << std::dec
+                  << (transient ? " (transient — retrying)" : " (fatal)") << "\n";
+        if (!transient || attempt == kMaxRetries) {
+            Release();
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(kRetryMs));
+    }
 
     return CreateStagingTexture(width_, height_);
 }
