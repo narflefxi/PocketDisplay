@@ -53,7 +53,7 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 ## Licensing
 The app is intended for commercial sale. All bundled assets and dependencies must use permissive licenses (no GPL/copyleft, no CC-BY-SA).
 - **Cursor assets**: CC0 — safe.
-- **x264**: GPL-licensed — ⚠️ HIGH PRIORITY blocker for commercial release. Must either buy a commercial x264 license OR replace with a permissive encoder (Media Foundation, NVENC, AMF, or QuickSync) before selling.
+- **x264**: GPL-licensed — Now OPTIONAL (CMake option `POCKETDISPLAY_ENABLE_X264`, default OFF). Media Foundation H.264 encoder (hardware → software MFT fallback) is the default non-GPL encoder for commercial builds.
 
 ## Known Issues / Deferred
 - **Resize cursor detection fails in custom-cursor apps** (e.g. Claude Desktop) — Windows-side cursor-type detection only matches standard `IDC_SIZE*` handles. Deferred.
@@ -61,6 +61,11 @@ The app is intended for commercial sale. All bundled assets and dependencies mus
 - **Housekeeping**: consolidate `PROJECT_CONTEXT.md` into `CLAUDE.md`; delete merged branches.
 
 ## Recently Fixed
+- x264 GPL dependency removed ✅
+  - Gated x264 behind `POCKETDISPLAY_ENABLE_X264` CMake option (default OFF) for commercial builds.
+  - Media Foundation H.264 encoder is now default with hardware → software MFT fallback.
+  - Updated `Session::Config::hw_enc` default to `true` (MF encoder enabled by default).
+  - Added `--sw` CLI flag to force software encoding; removed `--hw` flag (now default).
 - PR #24: Touch/cursor accuracy + Windows-style cursor shapes ✅
   - Touch lands exactly at touch point (toNormalized inversion fix, feature/cursor-fixes).
   - 11 Windows-style cursor shapes from CC0 SVG assets converted to VectorDrawables with per-type fractional hotspots in CursorOverlayView. Arrow hotspot at tip; hand hotspot at index fingertip (hx=0.397, hy=0.076); resize cursors centered.

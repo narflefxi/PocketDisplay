@@ -1,6 +1,8 @@
 #include "Encoder.h"
 #include <cstring>
 #include <cstdio>
+
+#ifdef POCKETDISPLAY_ENABLE_X264
 #include <excpt.h>
 
 // Wraps x264_encoder_encode in SEH so an AV inside x264 returns -2 instead of crashing.
@@ -25,12 +27,14 @@ static int SafeX264Headers(x264_t* h, x264_nal_t** pp_nal, int* pi_nal) {
         return -2;
     }
 }
+#endif
 
 Encoder::~Encoder() {
     Close();
 }
 
 bool Encoder::Initialize(int width, int height, int fps, int bitrate_kbps) {
+#ifdef POCKETDISPLAY_ENABLE_X264
     std::lock_guard<std::mutex> lock(mtx_);
 
     width_       = width;
@@ -78,9 +82,15 @@ bool Encoder::Initialize(int width, int height, int fps, int bitrate_kbps) {
     fprintf(stderr, "[ENC] Initialized %dx%d @ %d fps %d kbps\n",
             width, height, fps, bitrate_kbps);
     return true;
+#else
+    (void)width; (void)height; (void)fps; (void)bitrate_kbps;
+    fprintf(stderr, "[ENC] ERROR: x264 not available (POCKETDISPLAY_ENABLE_X264 not defined)\n");
+    return false;
+#endif
 }
 
 bool Encoder::GetConfigPacket(std::vector<uint8_t>& sps_pps_out) {
+#ifdef POCKETDISPLAY_ENABLE_X264
     std::lock_guard<std::mutex> lock(mtx_);
     if (!handle_) return false;
 
@@ -94,6 +104,10 @@ bool Encoder::GetConfigPacket(std::vector<uint8_t>& sps_pps_out) {
             nals[i].p_payload, nals[i].p_payload + nals[i].i_payload);
     }
     return !sps_pps_out.empty();
+#else
+    (void)sps_pps_out;
+    return false;
+#endif
 }
 
 void Encoder::BgraToI420(const uint8_t* bgra,
@@ -119,6 +133,7 @@ void Encoder::BgraToI420(const uint8_t* bgra,
 
 bool Encoder::EncodeFrame(const uint8_t* bgra,
                            std::vector<uint8_t>& nal_out, bool& is_keyframe) {
+#ifdef POCKETDISPLAY_ENABLE_X264
     std::lock_guard<std::mutex> lock(mtx_);
 
     if (!bgra || !handle_) return false;
@@ -161,9 +176,14 @@ bool Encoder::EncodeFrame(const uint8_t* bgra,
             nals[i].p_payload, nals[i].p_payload + nals[i].i_payload);
     }
     return true;
+#else
+    (void)bgra; (void)nal_out; (void)is_keyframe;
+    return false;
+#endif
 }
 
 void Encoder::Close() {
+#ifdef POCKETDISPLAY_ENABLE_X264
     std::lock_guard<std::mutex> lock(mtx_);
     if (!handle_) return;
     delete[] pic_in_.img.plane[0];
@@ -177,4 +197,5 @@ void Encoder::Close() {
     pts_    = 0;
     fprintf(stderr, "[ENC] Closed (total frames encoded: %llu)\n",
             static_cast<unsigned long long>(frame_count_));
+#endif
 }

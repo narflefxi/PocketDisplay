@@ -182,6 +182,7 @@ void HwEncoder::DrainOutput() {
 bool HwEncoder::Initialize(int width, int height, int fps, int bitrate_kbps) {
     width_  = width;
     height_ = height;
+    is_hardware_ = false;
 
     if (FAILED(MFStartup(MF_VERSION))) return false;
 
@@ -197,9 +198,21 @@ bool HwEncoder::Initialize(int width, int height, int fps, int bitrate_kbps) {
               &in_type, &out_type, &activates, &count);
 
     if (count == 0) {
-        std::cout << "      No hardware H.264 encoder found, falling back to x264.\n";
-        MFShutdown();
-        return false;
+        std::cout << "      No hardware H.264 encoder found, trying software MFT...\n";
+
+        // Try software MFT (non-GPL fallback) - omit HARDWARE flag to get software encoders
+        MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER,
+                  MFT_ENUM_FLAG_ASYNCMFT | MFT_ENUM_FLAG_SORTANDFILTER,
+                  &in_type, &out_type, &activates, &count);
+
+        if (count == 0) {
+            std::cerr << "      ERROR: No H.264 encoder available (hardware or software).\n";
+            MFShutdown();
+            return false;
+        }
+        is_hardware_ = false;
+    } else {
+        is_hardware_ = true;
     }
 
     HRESULT hr = activates[0]->ActivateObject(IID_PPV_ARGS(&encoder_));
@@ -209,7 +222,7 @@ bool HwEncoder::Initialize(int width, int height, int fps, int bitrate_kbps) {
         // Convert wide string to narrow for logging
         char name_a[256] = {};
         WideCharToMultiByte(CP_UTF8, 0, name_w, -1, name_a, sizeof(name_a), nullptr, nullptr);
-        std::cout << "      Hardware encoder: " << name_a << "\n";
+        std::cout << "      " << (is_hardware_ ? "Hardware" : "Software") << " encoder: " << name_a << "\n";
         CoTaskMemFree(name_w);
     }
     for (UINT32 i = 0; i < count; ++i) activates[i]->Release();
@@ -325,4 +338,5 @@ void HwEncoder::Close() {
     MFShutdown();
     pts_ = 0;
     sps_pps_found_ = false;
+    is_hardware_ = false;
 }

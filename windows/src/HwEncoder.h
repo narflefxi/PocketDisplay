@@ -12,16 +12,21 @@
 #include <mftransform.h>
 #include <wrl/client.h>
 
-// Hardware H.264 encoder using Windows Media Foundation.
+// Hardware/software H.264 encoder using Windows Media Foundation.
 // Transparently uses NVENC, Intel Quick Sync, or AMD VCE depending on the GPU.
+// Falls back to software H.264 MFT if no hardware encoder is available (non-GPL).
 // Same interface as Encoder so main.cpp can switch between them.
 class HwEncoder {
 public:
     HwEncoder()  = default;
     ~HwEncoder() { Close(); }
 
-    // Returns false if no hardware H.264 encoder is available on this system.
+    // Returns false if no H.264 encoder (hardware or software) is available on this system.
+    // First tries hardware encoders (NVENC/QuickSync/VCE), then falls back to software MFT.
     bool Initialize(int width, int height, int fps = 60, int bitrate_kbps = 8000);
+
+    // Returns true if using hardware acceleration, false if using software fallback.
+    bool IsHardware() const { return is_hardware_; }
 
     // Returns SPS/PPS in Annex-B format.
     // May return false on the first call if the encoder hasn't produced a
@@ -63,4 +68,5 @@ private:
 
     std::vector<uint8_t> sps_pps_cache_;
     bool                 sps_pps_found_ = false;
+    bool                 is_hardware_   = false;
 };

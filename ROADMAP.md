@@ -3,25 +3,13 @@
 Status: core features working (connection, UI/display, cursors). PR #21–#24 merged to master.
 Goal: ship a sellable Windows-to-Android second-display app.
 
-> ⚠️ Read the **Legal / Licensing** section first. There is at least one
-> blocking issue (x264 is GPL) that must be resolved before selling.
+> ✅ **x264 GPL blocker resolved** — Media Foundation H.264 encoder is now the default (non-GPL). x264 is optional via `POCKETDISPLAY_ENABLE_X264` CMake option.
 
 ---
 
 ## 0. BLOCKERS — must resolve before selling
 
-- [ ] **x264 encoder is GPL-licensed.** It's a core component (encodes the
-      captured screen to H.264 before streaming). GPL is copyleft: shipping a
-      closed-source commercial app linked against x264 can force the whole app
-      to be GPL (must open-source + allow free redistribution). Options:
-      - Buy a **commercial x264 license** (via x264's commercial licensing), OR
-      - Switch encoder to a non-GPL one:
-        - **Windows Media Foundation H.264** (built-in, no GPL)
-        - **NVENC** (NVIDIA), **AMF** (AMD), **QuickSync** (Intel) — hardware
-          encoders, usually commercial-friendly, faster + lower CPU
-      - Note: separate from GPL, **H.264 itself has patent/royalty terms
-        (MPEG-LA)** — check thresholds for a paid product.
-      - ⚠️ Not legal advice — confirm with someone who knows software licensing.
+- [x] **x264 encoder is GPL-licensed.** ✅ RESOLVED — Gated behind `POCKETDISPLAY_ENABLE_X264` (default OFF). Media Foundation H.264 encoder is now the default with hardware → software MFT fallback. For commercial builds, ensure POCKETDISPLAY_ENABLE_X264=OFF.
 - [ ] **Full dependency license audit.** Check EVERY bundled library (Windows +
       Android) for GPL/LGPL/CC-BY-SA/NC. Cursor assets are already CC0 (safe).
 
@@ -51,7 +39,7 @@ Goal: ship a sellable Windows-to-Android second-display app.
 
 ## 3. Legal
 
-- [ ] Resolve x264 (see Blockers).
+- [x] Resolve x264 (see Blockers — RESOLVED).
 - [ ] Complete **THIRD_PARTY_LICENSES** for ALL dependencies (not just cursors).
 - [ ] **EULA / Terms of Service.**
 - [ ] **Privacy Policy** (required for Play Store; good practice anyway).
@@ -74,8 +62,7 @@ Goal: ship a sellable Windows-to-Android second-display app.
 
 ## Suggested order
 
-1. **Resolve x264 license** (blocker — do this first; it may change the encoder
-   code and everything downstream).
+1. ~~**Resolve x264 license**~~ ✅ COMPLETED — Media Foundation encoder is now default.
 2. Full dependency license audit.
 3. Stability + cross-device testing.
 4. Packaging: installer + code signing (Windows), APK signing.

@@ -23,6 +23,7 @@ struct IEncoderImpl {
     virtual ~IEncoderImpl()                                   = default;
 };
 
+#ifdef POCKETDISPLAY_ENABLE_X264
 struct SwEncoderImpl : IEncoderImpl {
     Encoder enc;
     bool Initialize(int w, int h, int fps, int kbps) override { return enc.Initialize(w, h, fps, kbps); }
@@ -32,6 +33,7 @@ struct SwEncoderImpl : IEncoderImpl {
     }
     void Close() override { enc.Close(); }
 };
+#endif
 
 struct HwEncoderImpl : IEncoderImpl {
     HwEncoder enc;
@@ -69,24 +71,20 @@ bool Session::Start() {
     g_gui.capH.store(cap_h);
 
     // ── Encoder ───────────────────────────────────────────────────────────────
-    if (cfg_.hw_enc) {
-        auto hw = std::make_unique<HwEncoderImpl>();
-        if (hw->Initialize(cap_w, cap_h, cfg_.target_fps, cfg_.bitrate_kbps)) {
-            encoder_ = std::move(hw);
-            std::cout << "  [Session] HW encoder ready.\n";
-        } else {
-            std::cout << "  [Session] HW encoder failed \u2014 falling back to x264.\n";
-        }
-    }
-    if (!encoder_) {
-        auto sw = std::make_unique<SwEncoderImpl>();
-        if (!sw->Initialize(cap_w, cap_h, cfg_.target_fps, cfg_.bitrate_kbps)) {
-            std::cerr << "  [Session] ERROR: x264 encoder init failed.\n";
-            capture_.Release();
-            return false;
-        }
-        std::cout << "  [Session] x264 encoder ready.\n";
-        encoder_ = std::move(sw);
+    // Media Foundation encoder (HwEncoder) is the primary encoder for non-GPL builds.
+    // It first tries hardware encoders (NVENC/QuickSync/VCE), then falls back to
+    // software H.264 MFT - all without GPL code.
+    auto mf_enc = std::make_unique<HwEncoderImpl>();
+    if (mf_enc->Initialize(cap_w, cap_h, cfg_.target_fps, cfg_.bitrate_kbps)) {
+        encoder_ = std::move(mf_enc);
+        std::cout << "  [Session] Media Foundation encoder ready.\n";
+    } else {
+        std::cerr << "  [Session] ERROR: No H.264 encoder available.\n";
+        std::cerr << "              Media Foundation could not find a hardware or software encoder.\n";
+        std::cerr << "              This system may not support H.264 encoding.\n";
+        strncpy_s(g_gui.statusMsg, "ERROR: No H.264 encoder available", 255);
+        capture_.Release();
+        return false;
     }
 
     stream_w_.store(cap_w);

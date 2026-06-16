@@ -46,12 +46,12 @@ static void PrintUsage(const char* exe) {
     std::cout << "Usage:\n";
     SetColor(YELLOW);
     std::cout << "  AUTO: " << exe << "          (auto-discovers Android via UDP broadcast)\n";
-    std::cout << "  WiFi: " << exe << " <android_ip> [port] [bitrate_kbps] [fps] [--hw] [--extend | --monitor=N]\n";
-    std::cout << "  USB:  " << exe << " --usb [--hw] [--extend | --monitor=N]\n";
+    std::cout << "  WiFi: " << exe << " <android_ip> [port] [bitrate_kbps] [fps] [--sw] [--extend | --monitor=N]\n";
+    std::cout << "  USB:  " << exe << " --usb [--sw] [--extend | --monitor=N]\n";
     ResetColor();
     std::cout << "\nOptions:\n"
               << "  --usb        USB mode: adb reverse + TCP video server (device connects to PC)\n"
-              << "  --hw         Hardware encoder (NVENC/Intel/AMD â€” falls back to x264)\n"
+              << "  --sw         Force software H.264 encoder (Media Foundation SW MFT)” MFT)\n"
               << "  --extend     Capture last DXGI output (virtual/extended display)\n"
               << "  --monitor=N  Capture monitor N (1-based index, e.g. --monitor=2)\n"
               << "\nExamples:\n"
@@ -310,7 +310,7 @@ int main(int argc, char* argv[]) {
 
     // â”€â”€ Arg parsing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     bool     force_usb    = false;
-    bool     hw_enc       = false;
+    bool     hw_enc       = true;   // Media Foundation is now default (non-GPL)
     int      monitor_num  = 0;
     uint16_t port         = pocketdisplay::DEFAULT_PORT;
     uint16_t touch_port   = 7778;
@@ -320,7 +320,7 @@ int main(int argc, char* argv[]) {
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if      (arg == "--usb")    { force_usb  = true; }
-        else if (arg == "--hw")     { hw_enc     = true; }
+        else if (arg == "--sw")     { hw_enc     = false; }  // Force software MFT
         else if (arg == "--extend") { /* mode comes from Android HELLO */ }
         else if (arg.rfind("--monitor=", 0) == 0) { monitor_num = std::stoi(arg.substr(10)); }
         else if (arg == "--help" || arg == "-h")   { PrintUsage(argv[0]); return 0; }

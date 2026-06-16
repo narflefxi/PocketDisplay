@@ -39,7 +39,7 @@ public:
         int      output_idx   = 0;    // DXGI output  (from PickMonitor)
         int      monitor_num  = 1;    // 1-based (logging only)
         bool     extend_mode  = false;
-        bool     hw_enc       = false;
+        bool     hw_enc       = true; // Media Foundation encoder (HW preferred, SW fallback)
         int      android_w    = 0;    // Android screen dims from HELLO
         int      android_h    = 0;
         int      bitrate_kbps = 30000;

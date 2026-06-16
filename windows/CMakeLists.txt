@@ -4,16 +4,20 @@ project(PocketDisplay CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_path(X264_INCLUDE_DIR NAMES x264.h REQUIRED)
-find_library(X264_LIBRARY NAMES libx264 x264 REQUIRED)
-get_filename_component(X264_LIBRARY_DIR "${X264_LIBRARY}" DIRECTORY)
-find_file(X264_RUNTIME_DLL NAMES libx264-164.dll libx264.dll
-    PATHS
-        "${X264_LIBRARY_DIR}/../bin"
-        "${X264_LIBRARY_DIR}"
-    NO_DEFAULT_PATH)
-if(X264_RUNTIME_DLL)
-    get_filename_component(X264_RUNTIME_DLL_NAME "${X264_RUNTIME_DLL}" NAME)
+option(POCKETDISPLAY_ENABLE_X264 "Enable x264 encoder (GPL license)" OFF)
+
+if(POCKETDISPLAY_ENABLE_X264)
+    find_path(X264_INCLUDE_DIR NAMES x264.h REQUIRED)
+    find_library(X264_LIBRARY NAMES libx264 x264 REQUIRED)
+    get_filename_component(X264_LIBRARY_DIR "${X264_LIBRARY}" DIRECTORY)
+    find_file(X264_RUNTIME_DLL NAMES libx264-164.dll libx264.dll
+        PATHS
+            "${X264_LIBRARY_DIR}/../bin"
+            "${X264_LIBRARY_DIR}"
+        NO_DEFAULT_PATH)
+    if(X264_RUNTIME_DLL)
+        get_filename_component(X264_RUNTIME_DLL_NAME "${X264_RUNTIME_DLL}" NAME)
+    endif()
 endif()
 
 add_executable(PocketDisplay
@@ -33,10 +37,12 @@ add_executable(PocketDisplay
 set_source_files_properties(resources/resource.rc PROPERTIES
     COMPILE_FLAGS "/I\"${CMAKE_CURRENT_SOURCE_DIR}/resources\"")
 
-target_include_directories(PocketDisplay PRIVATE src resources ${X264_INCLUDE_DIR})
+target_include_directories(PocketDisplay PRIVATE src resources)
+if(POCKETDISPLAY_ENABLE_X264)
+    target_include_directories(PocketDisplay PRIVATE ${X264_INCLUDE_DIR})
+endif()
 
 target_link_libraries(PocketDisplay PRIVATE
-    ${X264_LIBRARY}
     d3d11
     dxgi
     dxguid
@@ -54,6 +60,9 @@ target_link_libraries(PocketDisplay PRIVATE
     windowscodecs
     msimg32
 )
+if(POCKETDISPLAY_ENABLE_X264)
+    target_link_libraries(PocketDisplay PRIVATE ${X264_LIBRARY})
+endif()
 
 add_custom_command(TARGET PocketDisplay POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -71,7 +80,7 @@ foreach(FONT Anton-Regular.ttf SpaceGrotesk-Medium.ttf SpaceGrotesk-Bold.ttf)
             "$<TARGET_FILE_DIR:PocketDisplay>/${FONT}")
 endforeach()
 
-if(X264_RUNTIME_DLL)
+if(POCKETDISPLAY_ENABLE_X264 AND X264_RUNTIME_DLL)
     add_custom_command(TARGET PocketDisplay POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${X264_RUNTIME_DLL}"
@@ -95,5 +104,8 @@ target_compile_definitions(PocketDisplay PRIVATE
     NOMINMAX
     _WIN32_WINNT=0x0A00
 )
+if(POCKETDISPLAY_ENABLE_X264)
+    target_compile_definitions(PocketDisplay PRIVATE POCKETDISPLAY_ENABLE_X264)
+endif()
 
 target_compile_options(PocketDisplay PRIVATE /W4 /WX- /utf-8)

@@ -3,10 +3,14 @@
 #include <vector>
 #include <mutex>
 
+#ifdef POCKETDISPLAY_ENABLE_X264
 extern "C" {
 #include <x264.h>
 }
+#endif
 
+// Software H.264 encoder (x264 GPL) - only available when POCKETDISPLAY_ENABLE_X264 is defined.
+// For non-GPL builds, use HwEncoder (Media Foundation) instead.
 class Encoder {
 public:
     Encoder() = default;
@@ -24,9 +28,11 @@ private:
                     uint8_t* y_plane, uint8_t* u_plane, uint8_t* v_plane) const;
 
     std::mutex     mtx_;
+#ifdef POCKETDISPLAY_ENABLE_X264
     x264_t*        handle_      = nullptr;
     x264_picture_t pic_in_      = {};
     x264_picture_t pic_out_     = {};
+#endif
     int            width_       = 0;
     int            height_      = 0;
     int64_t        pts_         = 0;

@@ -1,7 +1,5 @@
 {
   "name": "pocketdisplay",
   "version": "0.1.0",
-  "dependencies": [
-    "x264"
-  ]
+  "dependencies": []
 }
