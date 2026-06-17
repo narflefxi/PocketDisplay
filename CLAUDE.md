@@ -61,6 +61,13 @@ The app is intended for commercial sale. All bundled assets and dependencies mus
 - **Housekeeping**: consolidate `PROJECT_CONTEXT.md` into `CLAUDE.md`; delete merged branches.
 
 ## Recently Fixed
+- **Session-ID ACK ordering race (black screen on EVERY connect)** ✅
+  - **Root cause**: `onCodecConfiguredInternal()` fires the ACK loop immediately when codec config (type-1) arrives. `currentSessionId` is only populated when `onSenderIpReceived()` is called with a non-zero value from the stream_info (type-2) message. Because both messages arrive close together on the network thread and the callback is posted to the main thread, codec-config could be processed (and ACK sent) before `currentSessionId` was updated from 0. Windows rejects ACKs with session_id=0 as stale → `android_ready_` never becomes true → black screen on every connect.
+  - **Fix (Android, `ConnectionManager.kt`)**: `onCodecConfiguredInternal` ACK loop now checks `currentSessionId != 0` before calling `sendAck()`. If still 0, retries every 100ms. Guarantees first ACK always carries the correct non-zero session_id.
+  - **Fix (Android, `TouchSender.kt`)**: Added `pendingAckSession` field — the buffered-flush path (when touch socket connects after ACK was queued) now sends the stored session_id instead of the default 0.
+  - **Fix (Windows, `Session.h/cpp`)**: `last_stale_id_logged_` atomic suppresses repeated stale-ACK log spam (log once per unique stale id). Defence-in-depth; primary fix is Android not sending 0.
+  - Committed `01e99f2`; both apps built and APK installed.
+
 - **Reconnect black screen — Two-sided session-ID handshake (ROOT CAUSE FIX)** ✅
   - **Root cause**: Windows-side stale-ACK filtering created a DEADLOCK on reconnect. Windows session 2 rejected EVERY ACK as "Duplicate ACK for session 1 ignored" (26+ times) because Android had no concept of session ID — it kept sending ACKs that Windows attributed to the old session. `android_ready_` never became true for session 2, so `StreamLoop` never started, Android got 0 frames (black screen).
   - **Fix (Protocol v2: Two-sided session-ID handshake)**:
