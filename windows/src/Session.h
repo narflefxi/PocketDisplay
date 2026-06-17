@@ -95,6 +95,10 @@ private:
     std::atomic<bool>  running_       {false};
     std::atomic<bool>  android_ready_ {false};
 
+    // Per-session ID to detect stale ACKs from previous sessions during reconnect.
+    // Each new Session gets a unique ID; ACK callback validates it matches.
+    uint64_t session_id_ = 0;
+
     std::thread stream_thread_;
     std::thread resend_thread_;
     std::thread cursor_thread_;

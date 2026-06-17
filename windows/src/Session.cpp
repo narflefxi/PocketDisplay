@@ -10,6 +10,10 @@
 #include <chrono>
 #include <vector>
 #include <string>
+#include <atomic>
+
+// Static atomic for generating unique session IDs
+static std::atomic<uint64_t> s_next_session_id{1};
 
 // ── Internal encoder abstraction ─────────────────────────────────────────────
 
@@ -120,12 +124,32 @@ bool Session::Start() {
     stream_h_.store(cap_h);
     android_ready_.store(false);
 
+    // Assign unique session ID for stale ACK detection
+    session_id_ = s_next_session_id.fetch_add(1);
+    std::cout << "  [Session] Session ID " << session_id_ << " starting (android_ready=false).\n";
+
     // ── Touch receiver ────────────────────────────────────────────────────────
-    touch_.SetAckCallback([this](const std::string& /*sender_ip*/) {
-        android_ready_.store(true);
-        g_gui.connected.store(true);
-        strncpy_s(g_gui.statusMsg, "Android ready \u2014 streaming", 255);
-        std::cout << "  [Session] ACK received \u2014 streaming starts.\n";
+    // Capture session_id by value to validate ACKs belong to THIS session only.
+    // Idempotent: only transitions false->true once; duplicate ACKs are logged but ignored.
+    touch_.SetAckCallback([this, sid = session_id_](const std::string& /*sender_ip*/) {
+        if (sid != session_id_) {
+            // Stale ACK from previous session - discard silently
+            std::cout << "  [Session] Stale ACK from session " << sid
+                      << " ignored (current=" << session_id_ << ").\n";
+            return;
+        }
+        // Idempotent transition: only set true if currently false
+        bool expected = false;
+        if (android_ready_.compare_exchange_strong(expected, true)) {
+            g_gui.connected.store(true);
+            strncpy_s(g_gui.statusMsg, "Android ready \u2014 streaming", 255);
+            std::cout << "  [Session] ACK received \u2014 android_ready " << session_id_
+                      << " false->true, streaming starts.\n";
+        } else {
+            // Duplicate ACK for this session - already ready, log but ignore
+            std::cout << "  [Session] Duplicate ACK for session " << sid
+                      << " ignored (already ready).\n";
+        }
     });
     touch_.SetConnectCallback([]() {
         std::cout << "  [Session] Touch socket accepted.\n";
@@ -335,6 +359,10 @@ void Session::StreamLoop() {
     auto       next_frame     = std::chrono::steady_clock::now();
     const auto start_time     = next_frame;
 
+    // Track first capture after android_ready becomes true (one-time log per session)
+    bool capture_started_logged = false;
+    const uint64_t my_session_id = session_id_;
+
     try {
     while (running_.load()) {
         const auto now = std::chrono::steady_clock::now();
@@ -342,7 +370,17 @@ void Session::StreamLoop() {
             std::this_thread::sleep_for(next_frame - now);
         next_frame += frame_interval;
 
-        if (!android_ready_.load()) continue;
+        if (!android_ready_.load()) {
+            capture_started_logged = false;  // Reset in case android_ready toggles
+            continue;
+        }
+
+        // One-time log: first time we start capturing for this session
+        if (!capture_started_logged) {
+            std::cout << "[PIPE] StreamLoop: android_ready=true for session " << my_session_id
+                      << ", starting capture.\n";
+            capture_started_logged = true;
+        }
 
         int w = 0, h = 0;
         static std::atomic<int> capture_count{0};
@@ -390,6 +428,8 @@ void Session::StreamLoop() {
                 stream_w_.store(w);
                 stream_h_.store(h);
                 android_ready_.store(false);  // force codec-config resend
+                std::cout << "  [Session] Resolution changed " << session_id_
+                          << " - android_ready reset to false (waiting for new ACK).\n";
                 pending_resize_w_    = 0;
                 pending_resize_h_    = 0;
                 resize_stable_count_ = 0;

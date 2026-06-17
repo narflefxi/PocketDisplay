@@ -61,6 +61,14 @@ The app is intended for commercial sale. All bundled assets and dependencies mus
 - **Housekeeping**: consolidate `PROJECT_CONTEXT.md` into `CLAUDE.md`; delete merged branches.
 
 ## Recently Fixed
+- **Reconnect black screen — ACK/android_ready state machine fix** ✅
+  - **Root cause**: On reconnect, the new session would receive ACKs but the capture pipeline never started. Two issues: (1) Stale ACKs from the previous session could arrive and set `android_ready_=true` on the wrong session object. (2) No idempotency - duplicate ACKs kept firing the callback repeatedly without verifying the state actually transitioned. The `StreamLoop` waited for `android_ready_=true` but the one-way flag had no session validation.
+  - **Fix (Session-based ACK validation + idempotency)**:
+    1. **Per-session ID**: Added `session_id_` (unique per Session) captured by value in the ACK callback. Stale ACKs from previous sessions are discarded with a log message.
+    2. **Idempotent transition**: Changed from `store(true)` to `compare_exchange_strong(expected=false, true)` so only the first ACK for this session triggers the transition. Duplicate ACKs are logged but ignored.
+    3. **Comprehensive logging**: Added `[Session] Session ID N starting (android_ready=false)`, `[Session] ACK received — android_ready N false->true, streaming starts`, `[Session] Stale ACK from session X ignored (current=Y)`, `[Session] Duplicate ACK for session N ignored (already ready)`, `[PIPE] StreamLoop: android_ready=true for session N, starting capture`, and `[Session] Resolution changed N - android_ready reset to false (waiting for new ACK)`.
+  - **Verification**: Windows logs now show clear per-session ACK state transitions. Duplicate/stale ACKs are filtered. The `[PIPE] StreamLoop: android_ready=true` log confirms capture actually starts after the ACK.
+  - Changed files: `windows/src/Session.h/cpp`.
 - **Reconnect broken — Process-lifetime ScreenCapture** ✅
   - **Root cause**: DXGI Desktop Duplication allows only ONE active `IDXGIOutputDuplication` per output per process. Previous fixes (lifecycle tracking, use_count validation) tried to ensure the old Session was fully destroyed before creating a new one, but there was always a reference hiding somewhere (worker threads, lambdas, etc.). The latest log showed "no handle" in the destructor — meaning the wrong object was being destroyed.
   - **Fix (process-lifetime capture)**: Changed approach completely — **make ScreenCapture a process-lifetime object**, decoupled from Session lifecycle.
