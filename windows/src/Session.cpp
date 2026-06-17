@@ -135,9 +135,15 @@ bool Session::Start() {
     // Idempotent: only transitions false->true once per session.
     touch_.SetAckCallback([this](uint16_t ack_session_id) {
         if (ack_session_id != session_id_) {
-            // Stale ACK from previous session - discard
-            std::cout << "  [Session] Stale ACK from session " << ack_session_id
-                      << " ignored (current=" << session_id_ << ").\n";
+            // Stale ACK from old session or session_id=0 (Android sent before receiving stream_info).
+            // Log only once per unique stale id to avoid spam (Android may retry every second).
+            uint16_t prev = last_stale_id_logged_.load();
+            if (prev != ack_session_id) {
+                if (last_stale_id_logged_.compare_exchange_strong(prev, ack_session_id)) {
+                    std::cout << "  [Session] Stale ACK from session " << ack_session_id
+                              << " ignored (current=" << session_id_ << ") — will suppress repeats.\n";
+                }
+            }
             return;
         }
         // Idempotent transition: only set true if currently false

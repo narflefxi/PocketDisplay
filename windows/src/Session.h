@@ -99,6 +99,8 @@ private:
     // Each new Session gets a unique ID; ACK callback validates it matches.
     // Protocol v2: session_id is uint16_t on wire (0-65535 range).
     uint16_t session_id_ = 0;
+    // Suppresses repeated stale-ACK log spam (log once per session per stale id).
+    std::atomic<uint16_t> last_stale_id_logged_{0xFFFF};
 
     std::thread stream_thread_;
     std::thread resend_thread_;

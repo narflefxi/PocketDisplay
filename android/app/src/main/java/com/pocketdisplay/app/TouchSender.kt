@@ -51,7 +51,8 @@ open class TouchSender(
     @Volatile private var tcpSocket: Socket? = null
     private val executor     = Executors.newSingleThreadExecutor()
     // ACK may arrive before the touch socket connects; buffer it and flush on connect.
-    @Volatile private var pendingAck  = false
+    @Volatile private var pendingAck       = false
+    @Volatile private var pendingAckSession = 0
     @Volatile private var closed      = false
     private var connectThread: Thread? = null
 
@@ -85,8 +86,11 @@ open class TouchSender(
                         Log.i("PocketDisplay", "[DBG#16] Touch TCP probe OK — connection #$attempt")
                         executor.submit {
                             if (pendingAck) {
+                                val sid = pendingAckSession
                                 pendingAck = false
-                                rawSend(buildAckPacket())
+                                pendingAckSession = 0
+                                Log.i("PocketDisplay", "[ACK] Flushing buffered ACK with sessionId=$sid")
+                                rawSend(buildAckPacket(sid))
                             }
                         }
                         // Do NOT break — keep looping so we detect future disconnections.
@@ -162,9 +166,10 @@ open class TouchSender(
                 rawSend(buildAckPacket(sessionId))
             } else {
                 // TCP touch socket not yet connected; buffer and flush when it connects.
-                // Note: buffered ACKs don't carry session_id - onReconnect will send fresh ACK.
-                Log.i("PocketDisplay", "[ACK] sendAck: buffered as pendingAck (sessionId will be fresh on connect)")
+                // pendingAckSession stores the session_id so the buffered ACK carries the correct id.
+                Log.i("PocketDisplay", "[ACK] sendAck: buffered as pendingAck (sessionId=$sessionId)")
                 pendingAck = true
+                pendingAckSession = sessionId
             }
         }
     }

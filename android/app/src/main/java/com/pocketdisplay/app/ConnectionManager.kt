@@ -362,7 +362,15 @@ class ConnectionManager(private val context: Context) {
         val r = object : Runnable {
             override fun run() {
                 if (receiver == null) return
-                // Protocol v2: echo session_id in ACK so Windows can validate
+                // Protocol v2: echo session_id in ACK so Windows can validate.
+                // IMPORTANT: do NOT send ACK if session_id is still 0 (stream_info not yet
+                // received). Windows rejects ACKs with session_id=0 as stale. Wait until
+                // the session_id is populated (stream_info type-2 message arrives), then send.
+                if (currentSessionId == 0) {
+                    Log.i(TAG, "[ACK] Codec configured but session_id not yet received — waiting 100ms")
+                    mainHandler.postDelayed(this, 100)
+                    return
+                }
                 touchSender?.sendAck(sessionId = currentSessionId)
                 mainHandler.postDelayed(this, 1000)
             }
