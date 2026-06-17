@@ -83,12 +83,15 @@ void TouchReceiver::ProcessPacket(const uint8_t* buf, int len) {
     } else if (type == 6 || type == 7) {
         InjectVirtualKey(be_u16(pkt->payload), type == 6);
     } else if (type == 8) {
-        // Codec-ready ACK from Android
-        // Protocol v2: session_id is in bytes [6-7] as big-endian uint16_t
-        // (bytes [8-15] are padding, reserved for future use)
+        // Codec-ready ACK from Android.
+        // Protocol v2 packet layout (matches Android TouchSender.buildAckPacket):
+        //   [0-3] magic 'PDTI'  [4] type=8  [5] reserved  [6-7] session_id (BE uint16)
+        //   [8-15] padding (zero).
+        // session_id therefore lives in the raw buffer at bytes [6-7]
+        // (== pkt->reserved[1..2]). It is NOT in payload[] (which starts at byte 8).
         uint16_t session_id = 0;
         if (len >= 8) {
-            session_id = static_cast<uint16_t>((pkt->payload[2] << 8) | pkt->payload[3]);
+            session_id = static_cast<uint16_t>((buf[6] << 8) | buf[7]);
         }
         if (ack_cb_) ack_cb_(session_id);
     }
@@ -160,13 +163,23 @@ void TouchReceiver::ApplyTouchEvent(uint8_t type, float nx, float ny) const {
         return;
     }
 
+    // Snapshot the per-session context under the lock (process-lifetime
+    // receiver: a new Session may update these on another thread).
+    bool extended;
+    RECT mon_rect;
+    {
+        std::lock_guard<std::mutex> lk(ctx_mu_);
+        extended = extended_mode_;
+        mon_rect = mon_rect_;
+    }
+
     LONG  ax, ay;
     DWORD move_flags;
-    if (extended_mode_) {
-        const float screen_x = static_cast<float>(mon_rect_.left) +
-                                nx * static_cast<float>(mon_rect_.right  - mon_rect_.left);
-        const float screen_y = static_cast<float>(mon_rect_.top)  +
-                                ny * static_cast<float>(mon_rect_.bottom - mon_rect_.top);
+    if (extended) {
+        const float screen_x = static_cast<float>(mon_rect.left) +
+                                nx * static_cast<float>(mon_rect.right  - mon_rect.left);
+        const float screen_y = static_cast<float>(mon_rect.top)  +
+                                ny * static_cast<float>(mon_rect.bottom - mon_rect.top);
         const int vl = GetSystemMetrics(SM_XVIRTUALSCREEN);
         const int vt = GetSystemMetrics(SM_YVIRTUALSCREEN);
         const int vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);

@@ -396,6 +396,40 @@ int main(int argc, char* argv[]) {
     int last_capture_adapter = -1;
     int last_capture_output  = -1;
 
+    // PROCESS-LIFETIME TOUCH RECEIVER: bind port 7778 ONCE for the whole process
+    // and reuse it across every session (mirrors the process-capture pattern that
+    // fixed the DXGI reconnect race). Sessions borrow it via cfg.external_touch.
+    //
+    // Why: a per-session receiver re-binds 7778 on every reconnect. The old
+    // session's accept() loop is still alive when Android opens the new touch
+    // socket, so it intercepts the new ACK and validates it against the OLD
+    // session id ("Stale ACK from session N ignored (current=M)") — the new
+    // session never goes android_ready and the stream black-screens. A single
+    // long-lived receiver removes the rebind/handoff entirely; we just route the
+    // ACK to whichever Session is current.
+    TouchReceiver process_touch;
+    process_touch.SetAckCallback([&](uint16_t ack_session_id) {
+        std::shared_ptr<Session> sess;
+        {
+            std::lock_guard<std::mutex> lk(session_mu);
+            sess = current_session;  // keep alive while we call OnAck
+        }
+        if (sess) sess->OnAck(ack_session_id);
+    });
+    process_touch.SetConnectCallback([]() {
+        std::cout << "  [Touch] Android connected on shared receiver (port 7778).\n";
+    });
+    if (!process_touch.Start(touch_port)) {
+        SetColor(RED);
+        std::cerr << "  ERROR: Touch receiver listen failed on port " << touch_port << ".\n";
+        ResetColor();
+        return 1;
+    }
+    SetColor(GREEN);
+    std::cout << "  [Touch] Process-lifetime touch receiver bound on port "
+              << touch_port << " (reused across all sessions).\n";
+    ResetColor();
+
     hello_server.SetHelloCallback(
         [&](bool extend, int aW, int aH, const std::string& peer, SOCKET sock) {
         SetColor(GREEN);
@@ -499,6 +533,7 @@ int main(int argc, char* argv[]) {
         cfg.touch_port      = touch_port;
         cfg.streamer        = std::move(streamer);
         cfg.external_capture = &process_capture;  // Borrow process-lifetime capture
+        cfg.external_touch   = &process_touch;    // Borrow process-lifetime touch receiver
 
         auto sess = std::make_shared<Session>(std::move(cfg));
         if (sess->Start()) {
@@ -621,6 +656,11 @@ int main(int argc, char* argv[]) {
     }
     hello_server.Close();
     if (disc_thread.joinable()) disc_thread.join();
+
+    // Stop the process-lifetime touch receiver (joins its accept thread so no
+    // ACK callback can fire after current_session/session_mu go out of scope).
+    std::cout << "  [Main] Stopping process-lifetime touch receiver...\n";
+    process_touch.Stop();
 
     // Release process-lifetime capture on shutdown (disable external mode first)
     std::cout << "  [Main] Releasing process-lifetime capture...\n";

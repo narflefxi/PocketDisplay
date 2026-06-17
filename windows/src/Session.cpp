@@ -55,6 +55,35 @@ Session::Session(Config cfg) : cfg_(std::move(cfg)) {}
 
 Session::~Session() { Stop(); }
 
+// ── ACK handler (routed from owned or process-lifetime TouchReceiver) ────────
+
+void Session::OnAck(uint16_t ack_session_id) {
+    if (ack_session_id != session_id_) {
+        // Stale ACK from old session or session_id=0 (Android sent before receiving stream_info).
+        // Log only once per unique stale id to avoid spam (Android may retry every second).
+        uint16_t prev = last_stale_id_logged_.load();
+        if (prev != ack_session_id) {
+            if (last_stale_id_logged_.compare_exchange_strong(prev, ack_session_id)) {
+                std::cout << "  [Session] Stale ACK from session " << ack_session_id
+                          << " ignored (current=" << session_id_ << ") — will suppress repeats.\n";
+            }
+        }
+        return;
+    }
+    // Idempotent transition: only set true if currently false
+    bool expected = false;
+    if (android_ready_.compare_exchange_strong(expected, true)) {
+        g_gui.connected.store(true);
+        strncpy_s(g_gui.statusMsg, "Android ready \u2014 streaming", 255);
+        std::cout << "  [Session] ACK received for session " << session_id_
+                  << " \u2014 android_ready false->true, streaming starts.\n";
+    } else {
+        // Duplicate ACK for this session - already ready, log but ignore
+        std::cout << "  [Session] Duplicate ACK for session " << ack_session_id
+                  << " ignored (already ready).\n";
+    }
+}
+
 // ── Start ─────────────────────────────────────────────────────────────────────
 
 bool Session::Start() {
@@ -130,42 +159,35 @@ bool Session::Start() {
     std::cout << "  [Session] Session ID " << session_id_ << " starting (android_ready=false).\n";
 
     // ── Touch receiver ────────────────────────────────────────────────────────
-    // Set up ACK callback that validates session_id matches.
-    // Protocol v2: Android echoes session_id in ACK packet bytes [6-7].
-    // Idempotent: only transitions false->true once per session.
-    touch_.SetAckCallback([this](uint16_t ack_session_id) {
-        if (ack_session_id != session_id_) {
-            // Stale ACK from old session or session_id=0 (Android sent before receiving stream_info).
-            // Log only once per unique stale id to avoid spam (Android may retry every second).
-            uint16_t prev = last_stale_id_logged_.load();
-            if (prev != ack_session_id) {
-                if (last_stale_id_logged_.compare_exchange_strong(prev, ack_session_id)) {
-                    std::cout << "  [Session] Stale ACK from session " << ack_session_id
-                              << " ignored (current=" << session_id_ << ") — will suppress repeats.\n";
-                }
-            }
-            return;
+    // Protocol v2: Android echoes session_id in ACK packet bytes [6-7]; the
+    // ACK handler (Session::OnAck) validates it matches this session's id and
+    // flips android_ready_ false->true (idempotent).
+    //
+    // Two modes:
+    //  (a) EXTERNAL (process-lifetime) — main() owns one TouchReceiver bound to
+    //      port 7778 for the whole process. Sessions borrow it; main routes ACKs
+    //      to the current session via OnAck(). This is the reconnect-safe path:
+    //      the port never rebinds, so an old session's receiver can't intercept
+    //      the new session's ACK. We only register our touch-mapping context.
+    //  (b) OWNED (legacy) — Session binds its own receiver and wires callbacks.
+    touch_ptr_ = cfg_.external_touch ? cfg_.external_touch : &touch_;
+
+    if (cfg_.external_touch) {
+        // Refresh per-session coordinate mapping (Mirror resets extended=false).
+        touch_ptr_->SetSessionContext(cfg_.extend_mode,
+                                      cfg_.extend_mode ? capture_ptr_->GetMonitorRect() : RECT{});
+        // ACK routing + accept logging are configured once by main() on the
+        // shared receiver; nothing to wire here, and we must NOT Start/Stop it.
+    } else {
+        touch_ptr_->SetAckCallback([this](uint16_t ack_session_id) { OnAck(ack_session_id); });
+        touch_ptr_->SetConnectCallback([]() {
+            std::cout << "  [Session] Touch socket accepted.\n";
+        });
+        if (!touch_ptr_->Start(cfg_.touch_port)) {
+            std::cerr << "  [Session] WARNING: touch receiver failed to start (non-fatal)\n";
         }
-        // Idempotent transition: only set true if currently false
-        bool expected = false;
-        if (android_ready_.compare_exchange_strong(expected, true)) {
-            g_gui.connected.store(true);
-            strncpy_s(g_gui.statusMsg, "Android ready \u2014 streaming", 255);
-            std::cout << "  [Session] ACK received for session " << session_id_
-                      << " \u2014 android_ready false->true, streaming starts.\n";
-        } else {
-            // Duplicate ACK for this session - already ready, log but ignore
-            std::cout << "  [Session] Duplicate ACK for session " << ack_session_id
-                      << " ignored (already ready).\n";
-        }
-    });
-    touch_.SetConnectCallback([]() {
-        std::cout << "  [Session] Touch socket accepted.\n";
-    });
-    if (!touch_.Start(cfg_.touch_port)) {
-        std::cerr << "  [Session] WARNING: touch receiver failed to start (non-fatal)\n";
+        if (cfg_.extend_mode) touch_ptr_->SetExtendedMonitor(capture_ptr_->GetMonitorRect());
     }
-    if (cfg_.extend_mode) touch_.SetExtendedMonitor(capture_ptr_->GetMonitorRect());
 
     // ── Start worker threads ──────────────────────────────────────────────────
     running_.store(true);
@@ -201,7 +223,15 @@ void Session::Stop() {
         capture_ptr_->Release();
     }
     capture_ptr_ = nullptr;
-    touch_.Stop();
+    // Only stop an OWNED receiver. The process-lifetime (external) receiver is
+    // shared across sessions and must keep its port-7778 binding alive; main()
+    // stops it on shutdown. Clearing touch_ptr_ severs our link so any late ACK
+    // from the shared receiver (routed via main->current_session) won't target
+    // this dying session.
+    if (touch_ptr_ == &touch_) {
+        touch_.Stop();
+    }
+    touch_ptr_ = nullptr;
 
     g_gui.streaming.store(false);
     g_gui.connected.store(false);

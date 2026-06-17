@@ -59,6 +59,13 @@ public:
         // instead of creating its own. Session will NOT call Initialize() or
         // Release() on the external capture.
         ScreenCapture* external_capture = nullptr;
+        // External touch receiver (process-lifetime) — if set, Session borrows
+        // this single port-7778 receiver instead of binding its own. Session
+        // will NOT Start() or Stop() the external receiver; it only registers
+        // its per-session touch-mapping context. ACKs are routed to the live
+        // session by main() via Session::OnAck(). This eliminates the reconnect
+        // race where an old per-session receiver intercepts the new ACK.
+        TouchReceiver* external_touch = nullptr;
     };
 
     explicit Session(Config cfg);
@@ -76,6 +83,13 @@ public:
 
     bool IsRunning() const { return running_.load(); }
 
+    // Handle a codec-ready ACK routed from the process-lifetime TouchReceiver.
+    // Validates the ACK's session_id against this session's id and flips
+    // android_ready_ false->true on match (idempotent). Stale/duplicate ACKs
+    // are logged (suppressed) and ignored. Safe to call from the receiver's
+    // client thread.
+    void OnAck(uint16_t ack_session_id);
+
     // Live stats readable from any thread after Start().
     int GetFps()  const { return fps_.load();  }
     int GetKbps() const { return kbps_.load(); }
@@ -90,7 +104,8 @@ private:
     ScreenCapture                 capture_;      // Owned capture (unused if external set)
     ScreenCapture*                capture_ptr_ = nullptr;  // Points to capture_ or external
     std::unique_ptr<IEncoderImpl> encoder_;
-    TouchReceiver                 touch_;
+    TouchReceiver                 touch_;          // Owned receiver (legacy / unused if external set)
+    TouchReceiver*                touch_ptr_ = nullptr;  // Points to touch_ or external
 
     std::atomic<bool>  running_       {false};
     std::atomic<bool>  android_ready_ {false};

@@ -31,7 +31,16 @@ public:
 
     // Enable extended-display coordinate mapping for touch injection.
     // rect is the monitor's desktop coordinates (from DXGI_OUTPUT_DESC).
-    void SetExtendedMonitor(RECT rect) { extended_mode_ = true; mon_rect_ = rect; }
+    void SetExtendedMonitor(RECT rect) { SetSessionContext(true, rect); }
+
+    // Update per-session touch-mapping context. Used by the process-lifetime
+    // receiver so each new Session can refresh extended/mirror mapping without
+    // re-binding the port. Thread-safe.
+    void SetSessionContext(bool extended, RECT rect) {
+        std::lock_guard<std::mutex> lk(ctx_mu_);
+        extended_mode_ = extended;
+        mon_rect_      = rect;
+    }
 
 private:
     void TcpAcceptLoop();
@@ -48,6 +57,10 @@ private:
     std::mutex        client_mu_;                       // protects client_sock_
     std::thread       thread_;
     std::atomic<bool> running_{false};
+    // Per-session touch-mapping context (extended-display coordinate remap).
+    // Protected by ctx_mu_ because the process-lifetime receiver runs across
+    // sessions: the accept/client thread reads it while a new Session writes it.
+    mutable std::mutex ctx_mu_;
     bool              extended_mode_= false;
     RECT              mon_rect_     = {};
 };
