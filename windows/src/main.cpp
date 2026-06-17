@@ -388,6 +388,14 @@ int main(int argc, char* argv[]) {
     std::mutex               session_mu;
     std::shared_ptr<Session> current_session;
 
+    // PROCESS-LIFETIME SCREEN CAPTURE: Create once, reuse across all sessions.
+    // This eliminates the DXGI DuplicateOutput race on reconnect. Sessions borrow
+    // this capture via cfg.external_capture and do NOT call Initialize/Release.
+    ScreenCapture process_capture;
+    process_capture.SetExternalCaptureMode(true);
+    int last_capture_adapter = -1;
+    int last_capture_output  = -1;
+
     hello_server.SetHelloCallback(
         [&](bool extend, int aW, int aH, const std::string& peer, SOCKET sock) {
         SetColor(GREEN);
@@ -398,9 +406,8 @@ int main(int argc, char* argv[]) {
         ResetColor();
 
         // Stop existing session before creating the new one.
-        // CRITICAL: We must be the sole owner of old_sess so that .reset()
-        // actually runs the destructor (releasing IDXGIOutputDuplication).
-        // The main loop is written to never hold a long-lived shared_ptr copy.
+        // With process-lifetime capture, the Session destructor does NOT release
+        // the duplication — it stays alive for the next session.
         std::shared_ptr<Session> old_sess;
         {
             std::lock_guard<std::mutex> lk(session_mu);
@@ -412,15 +419,8 @@ int main(int argc, char* argv[]) {
                       << old_sess.use_count() << ")...\n";
             ResetColor();
             old_sess->Stop();
-            // Verify we are sole owner — if not, the old ScreenCapture won't
-            // be destroyed and DuplicateOutput will fail with E_INVALIDARG.
-            if (old_sess.use_count() != 1) {
-                std::cerr << "  [HELLO] WARNING: old session use_count="
-                          << old_sess.use_count()
-                          << " (expected 1) — other reference keeping it alive!\n";
-            }
-            old_sess.reset();  // destructor runs HERE — releases DXGI duplication
-            std::cout << "  [HELLO] Previous session fully destroyed.\n";
+            old_sess.reset();  // Session destroyed, but capture lives on
+            std::cout << "  [HELLO] Previous session destroyed (capture preserved).\n";
         }
 
         const bool is_usb = (peer == "127.0.0.1");
@@ -448,6 +448,33 @@ int main(int argc, char* argv[]) {
             return;
         }
 
+        // Check if we need to reinitialize the process-lifetime capture
+        // (output changed, e.g., Extended VDD appeared/disappeared or resolution change)
+        if (!process_capture.IsInitialized() ||
+            mon.adapter != last_capture_adapter ||
+            mon.output  != last_capture_output) {
+            SetColor(CYAN);
+            std::cout << "  [HELLO] Initializing process-lifetime capture (adapter="
+                      << mon.adapter << " output=" << mon.output << ")...\n";
+            ResetColor();
+            if (!process_capture.Initialize(mon.adapter, mon.output)) {
+                SetColor(RED);
+                std::cerr << "  [HELLO] Failed to initialize capture — session start aborted.\n";
+                ResetColor();
+                if (sock != INVALID_SOCKET) closesocket(sock);
+                return;
+            }
+            last_capture_adapter = mon.adapter;
+            last_capture_output  = mon.output;
+            SetColor(GREEN);
+            std::cout << "  [HELLO] Process-lifetime capture ready ("
+                      << process_capture.GetWidth() << "x" << process_capture.GetHeight() << ")\n";
+            ResetColor();
+        } else {
+            std::cout << "  [HELLO] Reusing existing process-lifetime capture (adapter="
+                      << last_capture_adapter << " output=" << last_capture_output << ")\n";
+        }
+
         // Build transport streamer — always TCP (Phase 3: WiFi video moved to TCP).
         if (sock == INVALID_SOCKET) {
             SetColor(RED);
@@ -459,18 +486,19 @@ int main(int argc, char* argv[]) {
 
         // Build and start session.
         Session::Config cfg;
-        cfg.adapter_idx  = mon.adapter;
-        cfg.output_idx   = mon.output;
-        cfg.monitor_num  = mon.number;
-        cfg.extend_mode  = extend;
-        cfg.hw_enc       = hw_enc;
-        cfg.android_w    = aW;
-        cfg.android_h    = aH;
-        cfg.bitrate_kbps = bitrate_kbps;
-        cfg.target_fps   = target_fps;
-        cfg.usb_mode     = is_usb;  // true=USB, false=WiFi (both TCP in Phase 3)
-        cfg.touch_port   = touch_port;
-        cfg.streamer     = std::move(streamer);
+        cfg.adapter_idx     = mon.adapter;
+        cfg.output_idx      = mon.output;
+        cfg.monitor_num     = mon.number;
+        cfg.extend_mode     = extend;
+        cfg.hw_enc          = hw_enc;
+        cfg.android_w       = aW;
+        cfg.android_h       = aH;
+        cfg.bitrate_kbps    = bitrate_kbps;
+        cfg.target_fps      = target_fps;
+        cfg.usb_mode        = is_usb;  // true=USB, false=WiFi (both TCP in Phase 3)
+        cfg.touch_port      = touch_port;
+        cfg.streamer        = std::move(streamer);
+        cfg.external_capture = &process_capture;  // Borrow process-lifetime capture
 
         auto sess = std::make_shared<Session>(std::move(cfg));
         if (sess->Start()) {
@@ -578,7 +606,7 @@ int main(int argc, char* argv[]) {
             }
             if (dying) {
                 dying->Stop();
-                dying.reset();  // destructor runs — releases DXGI duplication
+                dying.reset();  // Session destroyed, capture preserved (process-lifetime)
             }
             g_gui.connected.store(false);
             strncpy_s(g_gui.statusMsg, "Disconnected \u2014 waiting\u2026", 255);
@@ -593,6 +621,12 @@ int main(int argc, char* argv[]) {
     }
     hello_server.Close();
     if (disc_thread.joinable()) disc_thread.join();
+
+    // Release process-lifetime capture on shutdown (disable external mode first)
+    std::cout << "  [Main] Releasing process-lifetime capture...\n";
+    process_capture.SetExternalCaptureMode(false);
+    process_capture.Release();
+
     if (usb_device_present && usb_adb_ready) ClearAdbReverse();
     g_gui.streaming.store(false);
     g_gui.connected.store(false);

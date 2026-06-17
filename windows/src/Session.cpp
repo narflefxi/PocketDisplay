@@ -57,14 +57,39 @@ bool Session::Start() {
     if (running_.load()) return true;
 
     // ── Screen capture ────────────────────────────────────────────────────────
-    std::cout << "  [Session] Initializing capture (adapter=" << cfg_.adapter_idx
-              << " output=" << cfg_.output_idx << ")...\n";
-    if (!capture_.Initialize(cfg_.adapter_idx, cfg_.output_idx)) {
-        std::cerr << "  [Session] ERROR: ScreenCapture init failed.\n";
-        return false;
+    // Determine which capture to use: external (process-lifetime) or owned.
+    if (cfg_.external_capture) {
+        capture_ptr_ = cfg_.external_capture;
+        std::cout << "  [Session] Using EXTERNAL capture (adapter=" << cfg_.adapter_idx
+                  << " output=" << cfg_.output_idx << ")...\n";
+        // Verify external capture is initialized. Caller must initialize before
+        // passing to Session; we don't call Initialize() to avoid races.
+        if (!capture_ptr_->IsInitialized()) {
+            std::cerr << "  [Session] ERROR: External capture not initialized!\n";
+            capture_ptr_ = nullptr;
+            return false;
+        }
+        // Verify adapter/output match (or trust caller's PickMonitor selection)
+        if (capture_ptr_->GetAdapterIdx() != cfg_.adapter_idx ||
+            capture_ptr_->GetOutputIdx() != cfg_.output_idx) {
+            std::cout << "  [Session] NOTE: External capture has different adapter/output ("
+                      << capture_ptr_->GetAdapterIdx() << "," << capture_ptr_->GetOutputIdx()
+                      << ") vs requested (" << cfg_.adapter_idx << "," << cfg_.output_idx << ")\n";
+            // This is OK - the caller (main.cpp) decides the output; external
+            // capture was initialized to a specific output and we use it.
+        }
+    } else {
+        capture_ptr_ = &capture_;
+        std::cout << "  [Session] Initializing capture (adapter=" << cfg_.adapter_idx
+                  << " output=" << cfg_.output_idx << ")...\n";
+        if (!capture_ptr_->Initialize(cfg_.adapter_idx, cfg_.output_idx)) {
+            std::cerr << "  [Session] ERROR: ScreenCapture init failed.\n";
+            capture_ptr_ = nullptr;
+            return false;
+        }
     }
-    const int cap_w = capture_.GetWidth();
-    const int cap_h = capture_.GetHeight();
+    const int cap_w = capture_ptr_->GetWidth();
+    const int cap_h = capture_ptr_->GetHeight();
     std::cout << "  [Session] Capture ready: " << cap_w << "x" << cap_h
               << (cfg_.extend_mode ? "  (extended)" : "") << "\n";
     g_gui.capW.store(cap_w);
@@ -83,7 +108,11 @@ bool Session::Start() {
         std::cerr << "              Media Foundation could not find a hardware or software encoder.\n";
         std::cerr << "              This system may not support H.264 encoding.\n";
         strncpy_s(g_gui.statusMsg, "ERROR: No H.264 encoder available", 255);
-        capture_.Release();
+        // Only release owned capture, not external
+        if (capture_ptr_ == &capture_) {
+            capture_ptr_->Release();
+        }
+        capture_ptr_ = nullptr;
         return false;
     }
 
@@ -104,7 +133,7 @@ bool Session::Start() {
     if (!touch_.Start(cfg_.touch_port)) {
         std::cerr << "  [Session] WARNING: touch receiver failed to start (non-fatal)\n";
     }
-    if (cfg_.extend_mode) touch_.SetExtendedMonitor(capture_.GetMonitorRect());
+    if (cfg_.extend_mode) touch_.SetExtendedMonitor(capture_ptr_->GetMonitorRect());
 
     // ── Start worker threads ──────────────────────────────────────────────────
     running_.store(true);
@@ -135,7 +164,11 @@ void Session::Stop() {
     if (cursor_thread_.joinable())  cursor_thread_.join();
 
     if (encoder_) { encoder_->Close(); encoder_.reset(); }
-    capture_.Release();
+    // Only release owned capture, not external (process-lifetime capture reused across sessions)
+    if (capture_ptr_ == &capture_) {
+        capture_ptr_->Release();
+    }
+    capture_ptr_ = nullptr;
     touch_.Stop();
 
     g_gui.streaming.store(false);
@@ -210,7 +243,7 @@ void Session::CursorLoop() {
     const HCURSOR c_appstart = LoadCursor(NULL, IDC_APPSTARTING);
 
     const bool extended = cfg_.extend_mode;
-    const RECT mon_rect = capture_.GetMonitorRect();
+    const RECT mon_rect = capture_ptr_->GetMonitorRect();
     const int  screen_w = GetSystemMetrics(SM_CXSCREEN);
     const int  screen_h = GetSystemMetrics(SM_CYSCREEN);
 
@@ -318,7 +351,7 @@ void Session::StreamLoop() {
             std::cout << "[PIPE] captured frame " << cap_n << " (" << w << "x" << h << ")\n";
         }
 
-        if (!capture_.CaptureFrame(bgra_buf, w, h)) {
+        if (!capture_ptr_->CaptureFrame(bgra_buf, w, h)) {
             if (cap_n <= 5) std::cerr << "[PIPE] CaptureFrame failed\n";
             continue;
         }

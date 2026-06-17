@@ -32,6 +32,14 @@ struct IEncoderImpl;
 // ── Session ───────────────────────────────────────────────────────────────────
 // Owns one streaming session: capture → encode → send.
 // Created per-HELLO, torn down on disconnect or new HELLO.
+//
+// SCREEN CAPTURE LIFECYCLE:
+// By default, Session owns its ScreenCapture and creates/destroys it per-session.
+// For process-lifetime capture (reconnect without DuplicateOutput), pass an
+// external ScreenCapture pointer via cfg.external_capture. In this mode:
+//   - Session does NOT call Initialize() on the external capture (caller must)
+//   - Session does NOT call Release() on the external capture during Stop()
+//   - The external capture outlives the Session and is reused across reconnects
 class Session {
 public:
     struct Config {
@@ -47,6 +55,10 @@ public:
         bool     usb_mode     = false;  // TCP touch (USB) vs UDP touch (WiFi)
         uint16_t touch_port   = 7778;
         std::unique_ptr<IStreamer> streamer;  // owned; Close() called on teardown
+        // External capture (process-lifetime) — if set, Session borrows this
+        // instead of creating its own. Session will NOT call Initialize() or
+        // Release() on the external capture.
+        ScreenCapture* external_capture = nullptr;
     };
 
     explicit Session(Config cfg);
@@ -75,7 +87,8 @@ private:
     static void WriteCrashLog(const std::string& msg);
 
     Config      cfg_;
-    ScreenCapture                 capture_;
+    ScreenCapture                 capture_;      // Owned capture (unused if external set)
+    ScreenCapture*                capture_ptr_ = nullptr;  // Points to capture_ or external
     std::unique_ptr<IEncoderImpl> encoder_;
     TouchReceiver                 touch_;
 

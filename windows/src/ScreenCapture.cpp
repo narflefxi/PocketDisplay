@@ -4,16 +4,61 @@
 #include <iostream>
 
 ScreenCapture::~ScreenCapture() {
-    std::cout << "  [ScreenCapture] DTOR: releasing duplication"
+    std::cout << "  [ScreenCapture] DTOR: "
+              << (external_capture_mode_ ? "external mode - " : "")
+              << "releasing duplication"
               << (duplication_ ? " (handle alive)" : " (no handle)")
               << "\n";
+    // Always fully release on destruction regardless of mode
+    bool saved_mode = external_capture_mode_;
+    external_capture_mode_ = false;
     Release();
+    external_capture_mode_ = saved_mode;
 }
 
 bool ScreenCapture::Initialize(int adapter_idx, int output_idx) {
-    // Fully release any previous DXGI state first — Desktop Duplication allows
-    // only ONE active IDXGIOutputDuplication per output per process.
-    Release();
+    return DoInitialize(adapter_idx, output_idx, false);
+}
+
+bool ScreenCapture::ForceReinitialize(int adapter_idx, int output_idx) {
+    std::cout << "  [ScreenCapture] ForceReinitialize requested (adapter="
+              << adapter_idx << " output=" << output_idx << ")\n";
+    return DoInitialize(adapter_idx, output_idx, true);
+}
+
+bool ScreenCapture::DoInitialize(int adapter_idx, int output_idx, bool force) {
+    // If already initialized with same adapter/output and not forced, return true.
+    if (!force && duplication_ && adapter_idx == adapter_idx_ && output_idx == output_idx_) {
+        std::cout << "  [ScreenCapture] Already initialized (adapter=" << adapter_idx_
+                  << " output=" << output_idx_ << ") - reusing existing duplication\n";
+        return true;
+    }
+
+    // In external capture mode, don't auto-release - caller must use ForceReinitialize.
+    // This prevents accidental destruction when a Session ends.
+    if (external_capture_mode_ && duplication_ && !force) {
+        std::cout << "  [ScreenCapture] External mode: cannot auto-reinitialize.\n";
+        std::cout << "                  Use ForceReinitialize() if output changed.\n";
+        // Return true if the requested output matches current, false otherwise.
+        // The caller (Session) should verify dimensions and trigger ForceReinitialize
+        // if the capture is on the wrong output.
+        if (adapter_idx == adapter_idx_ && output_idx == output_idx_) {
+            return true;
+        }
+        std::cerr << "  [ScreenCapture] ERROR: Requested adapter/output ("
+                  << adapter_idx << "," << output_idx << ") differs from current ("
+                  << adapter_idx_ << "," << output_idx_ << ")\n";
+        return false;
+    }
+
+    // Full release before creating new duplication
+    // (unless external mode and force=false, but we handled that above)
+    if (!external_capture_mode_ || force) {
+        if (duplication_) {
+            std::cout << "  [ScreenCapture] Releasing old duplication before re-init\n";
+        }
+        Release();
+    }
 
     adapter_idx_ = adapter_idx;
     output_idx_  = output_idx;
@@ -74,18 +119,21 @@ bool ScreenCapture::Initialize(int adapter_idx, int output_idx) {
     height_ &= ~1;
 
     // DuplicateOutput — only ONE active duplication per output per process is
-    // allowed.  The caller MUST ensure the previous ScreenCapture is fully
-    // destroyed (Release() called) before calling Initialize() again.
+    // allowed.  With process-lifetime capture, this should only be called once
+    // at startup, and the duplication is reused across sessions.
     hr = output1->DuplicateOutput(device_.Get(), &duplication_);
     if (FAILED(hr)) {
         std::cerr << "  [ScreenCapture] DuplicateOutput FAILED hr=0x"
                   << std::hex << hr << std::dec << "\n";
         if (hr == E_INVALIDARG)
             std::cerr << "  [ScreenCapture]   -> E_INVALIDARG: previous duplication still alive in this process!\n";
+        if (hr == DXGI_ERROR_NOT_CURRENTLY_AVAILABLE)
+            std::cerr << "  [ScreenCapture]   -> DXGI_ERROR_NOT_CURRENTLY_AVAILABLE: output may be in use\n";
         Release();
         return false;
     }
-    std::cout << "  [ScreenCapture] DuplicateOutput OK\n";
+    std::cout << "  [ScreenCapture] DuplicateOutput OK (adapter=" << adapter_idx_
+              << " output=" << output_idx_ << ")\n";
 
     return CreateStagingTexture(width_, height_);
 }
@@ -161,6 +209,15 @@ bool ScreenCapture::CaptureFrame(std::vector<uint8_t>& bgra_out, int& width, int
 void ScreenCapture::Release() {
     staging_.Reset();
     if (duplication_) {
+        // In external capture mode, keep the duplication alive across sessions.
+        if (external_capture_mode_) {
+            std::cout << "  [ScreenCapture] Release: external mode - preserving IDXGIOutputDuplication\n";
+            // Don't reset staging_ or duplication_ in external mode
+            // Only release device/context (they're cheap to recreate)
+            context_.Reset();
+            device_.Reset();
+            return;
+        }
         std::cout << "  [ScreenCapture] Release: releasing IDXGIOutputDuplication\n";
         duplication_.Reset();
     }
