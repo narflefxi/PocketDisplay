@@ -138,26 +138,32 @@ open class TouchSender(
         }
     }
 
-    private fun buildAckPacket(): ByteArray {
+    // Protocol v2: ACK packet includes session_id in bytes [6-7] (big-endian uint16)
+    private fun buildAckPacket(sessionId: Int = 0): ByteArray {
         val buf = ByteBuffer.allocate(16).order(ByteOrder.BIG_ENDIAN)
         buf.put('P'.code.toByte()).put('D'.code.toByte())
            .put('T'.code.toByte()).put('I'.code.toByte())
         buf.put(8.toByte())                   // CODEC_READY_ACK
-        buf.put(0); buf.put(0); buf.put(0)    // reserved
+        buf.put(0.toByte())                   // reserved [5]
+        // Bytes [6-7]: session_id (uint16 big-endian) for protocol v2 session validation
+        buf.putShort((sessionId and 0xFFFF).toShort())
         buf.putLong(0)                        // bytes [8-15]: padding
         return buf.array()
     }
 
-    /** Notify Windows that Android's codec is ready (type 8). */
-    fun sendAck() {
+    /** Notify Windows that Android's codec is ready (type 8).
+     *  Protocol v2: sessionId is echoed from stream_info for Windows to validate.
+     */
+    fun sendAck(sessionId: Int = 0) {
         executor.submit {
             val sock = tcpSocket
-            Log.i("PocketDisplay", "[ACK] sendAck: tcpSocket=${if (sock != null) "connected" else "null"}")
+            Log.i("PocketDisplay", "[ACK] sendAck(sessionId=$sessionId): tcpSocket=${if (sock != null) "connected" else "null"}")
             if (sock != null) {
-                rawSend(buildAckPacket())
+                rawSend(buildAckPacket(sessionId))
             } else {
                 // TCP touch socket not yet connected; buffer and flush when it connects.
-                Log.i("PocketDisplay", "[ACK] sendAck: buffered as pendingAck")
+                // Note: buffered ACKs don't carry session_id - onReconnect will send fresh ACK.
+                Log.i("PocketDisplay", "[ACK] sendAck: buffered as pendingAck (sessionId will be fresh on connect)")
                 pendingAck = true
             }
         }

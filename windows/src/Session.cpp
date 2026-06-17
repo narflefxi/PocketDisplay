@@ -12,8 +12,8 @@
 #include <string>
 #include <atomic>
 
-// Static atomic for generating unique session IDs
-static std::atomic<uint64_t> s_next_session_id{1};
+// Static atomic for generating unique session IDs (protocol v2: uint16_t on wire)
+static std::atomic<uint16_t> s_next_session_id{1};
 
 // ── Internal encoder abstraction ─────────────────────────────────────────────
 
@@ -124,17 +124,19 @@ bool Session::Start() {
     stream_h_.store(cap_h);
     android_ready_.store(false);
 
-    // Assign unique session ID for stale ACK detection
+    // Assign unique session ID for stale ACK detection (wraps at 65535, 0 reserved)
     session_id_ = s_next_session_id.fetch_add(1);
+    if (session_id_ == 0) session_id_ = s_next_session_id.fetch_add(1);  // skip 0 (reserved)
     std::cout << "  [Session] Session ID " << session_id_ << " starting (android_ready=false).\n";
 
     // ── Touch receiver ────────────────────────────────────────────────────────
-    // Capture session_id by value to validate ACKs belong to THIS session only.
-    // Idempotent: only transitions false->true once; duplicate ACKs are logged but ignored.
-    touch_.SetAckCallback([this, sid = session_id_](const std::string& /*sender_ip*/) {
-        if (sid != session_id_) {
-            // Stale ACK from previous session - discard silently
-            std::cout << "  [Session] Stale ACK from session " << sid
+    // Set up ACK callback that validates session_id matches.
+    // Protocol v2: Android echoes session_id in ACK packet bytes [6-7].
+    // Idempotent: only transitions false->true once per session.
+    touch_.SetAckCallback([this](uint16_t ack_session_id) {
+        if (ack_session_id != session_id_) {
+            // Stale ACK from previous session - discard
+            std::cout << "  [Session] Stale ACK from session " << ack_session_id
                       << " ignored (current=" << session_id_ << ").\n";
             return;
         }
@@ -143,11 +145,11 @@ bool Session::Start() {
         if (android_ready_.compare_exchange_strong(expected, true)) {
             g_gui.connected.store(true);
             strncpy_s(g_gui.statusMsg, "Android ready \u2014 streaming", 255);
-            std::cout << "  [Session] ACK received \u2014 android_ready " << session_id_
-                      << " false->true, streaming starts.\n";
+            std::cout << "  [Session] ACK received for session " << session_id_
+                      << " \u2014 android_ready false->true, streaming starts.\n";
         } else {
             // Duplicate ACK for this session - already ready, log but ignore
-            std::cout << "  [Session] Duplicate ACK for session " << sid
+            std::cout << "  [Session] Duplicate ACK for session " << ack_session_id
                       << " ignored (already ready).\n";
         }
     });
@@ -232,14 +234,18 @@ void Session::ResendLoop() {
         // Stop resending once android_ready (ACK received). Resume if android_ready
         // is reset (encoder re-init on resolution change, or new session from reconnect).
         if (cfg_.streamer && !android_ready_.load()) {
-            uint8_t dims[12];
+            // Protocol v2: stream_info is 16 bytes: w(uint32), h(uint32), flags(uint32), session_id(uint16), padding(uint16)
+            uint8_t dims[16];
             const uint32_t sw = htonl(static_cast<uint32_t>(stream_w_.load()));
             const uint32_t sh = htonl(static_cast<uint32_t>(stream_h_.load()));
             const uint32_t sf = htonl(cfg_.extend_mode ? 1u : 0u);
-            std::memcpy(dims,     &sw, 4);
-            std::memcpy(dims + 4, &sh, 4);
-            std::memcpy(dims + 8, &sf, 4);
-            cfg_.streamer->SendFrame(dims, 12, 0, pocketdisplay::FLAG_STREAM_INFO);
+            const uint16_t sid = htons(session_id_);
+            std::memcpy(dims,      &sw, 4);
+            std::memcpy(dims + 4,  &sh, 4);
+            std::memcpy(dims + 8,  &sf, 4);
+            std::memcpy(dims + 12, &sid, 2);
+            std::memset(dims + 14, 0, 2);  // padding
+            cfg_.streamer->SendFrame(dims, 16, 0, pocketdisplay::FLAG_STREAM_INFO);
 
             std::vector<uint8_t> sps_pps;
             if (encoder_ && encoder_->GetConfigPacket(sps_pps) && !sps_pps.empty())

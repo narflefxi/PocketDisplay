@@ -84,7 +84,13 @@ void TouchReceiver::ProcessPacket(const uint8_t* buf, int len) {
         InjectVirtualKey(be_u16(pkt->payload), type == 6);
     } else if (type == 8) {
         // Codec-ready ACK from Android
-        if (ack_cb_) ack_cb_("");
+        // Protocol v2: session_id is in bytes [6-7] as big-endian uint16_t
+        // (bytes [8-15] are padding, reserved for future use)
+        uint16_t session_id = 0;
+        if (len >= 8) {
+            session_id = static_cast<uint16_t>((pkt->payload[2] << 8) | pkt->payload[3]);
+        }
+        if (ack_cb_) ack_cb_(session_id);
     }
 }
 

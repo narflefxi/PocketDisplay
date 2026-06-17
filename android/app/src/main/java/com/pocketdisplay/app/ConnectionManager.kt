@@ -60,6 +60,9 @@ class ConnectionManager(private val context: Context) {
     var touchSender: TouchSender? = null
         private set
 
+    // Protocol v2: session_id from Windows for ACK validation. Reset on each new connection.
+    @Volatile private var currentSessionId: Int = 0
+
     private var discoverClient: DiscoveryClient? = null
     @Volatile private var discoveredHostIp: String? = null
 
@@ -247,7 +250,7 @@ class ConnectionManager(private val context: Context) {
             port             = VIDEO_PORT,
             onStatus         = { s -> mainHandler.post { onStatus?.invoke(s) } },
             onDimensions     = { w, h -> mainHandler.post { onVideoDimensions?.invoke(w, h) } },
-            onSenderIp       = { ip -> mainHandler.post { onSenderIpReceived(ip) } },
+            onSenderIp       = { ip, sessionId -> mainHandler.post { onSenderIpReceived(ip, sessionId) } },
             onWindowsSize    = { w, h -> mainHandler.post { onWindowsSize?.invoke(w, h) } },
             onCursorPos      = { nx, ny, t -> onCursorPos?.invoke(nx, ny, t) },
             onCodecConfigured = { mainHandler.post { onCodecConfiguredInternal() } },
@@ -296,7 +299,7 @@ class ConnectionManager(private val context: Context) {
             port             = VIDEO_PORT,
             onStatus         = { s -> mainHandler.post { onStatus?.invoke(s) } },
             onDimensions     = { w, h -> mainHandler.post { onVideoDimensions?.invoke(w, h) } },
-            onSenderIp       = { ip -> mainHandler.post { onSenderIpReceived(ip) } },
+            onSenderIp       = { ip, sessionId -> mainHandler.post { onSenderIpReceived(ip, sessionId) } },
             onWindowsSize    = { w, h -> mainHandler.post { onWindowsSize?.invoke(w, h) } },
             onCursorPos      = { nx, ny, t -> onCursorPos?.invoke(nx, ny, t) },
             onCodecConfigured = { mainHandler.post { onCodecConfiguredInternal() } },
@@ -318,6 +321,8 @@ class ConnectionManager(private val context: Context) {
         discoverClient?.stop(); discoverClient = null
         receiver?.stop(); receiver = null
         touchSender?.close(); touchSender = null
+        // Protocol v2: Reset session_id so next connection gets fresh ACK with new ID
+        currentSessionId = 0
         currentTransport = Transport.NONE
         onConnected?.invoke(false)
         onExtendedBadge?.invoke(false)
@@ -331,18 +336,25 @@ class ConnectionManager(private val context: Context) {
 
     // ── Session event handlers ─────────────────────────────────────────────────
 
-    private fun onSenderIpReceived(ip: String) {
+    private fun onSenderIpReceived(ip: String, sessionId: Int) {
+        // Protocol v2: session_id from stream_info (type 2 message). 0 = unknown/not yet received.
+        if (sessionId != 0) {
+            currentSessionId = sessionId
+            Log.i(TAG, "[CM] Session ID updated: $sessionId")
+        }
+
         // Re-confirm transport label on every TCP stream connect (covers reconnects and edge cases).
         if (currentTransport != Transport.NONE)
             onTransport?.invoke(if (currentTransport == Transport.USB) "USB" else "Wi-Fi")
 
-        if (touchSender != null) return  // already created (auto-reconnect within same session)
-        val touchHost = if (currentTransport == Transport.USB) "127.0.0.1" else ip
-        Log.i(TAG, "[CM] Creating TouchSender → $touchHost:$TOUCH_PORT")
-        touchSender = TouchSender(touchHost, port = TOUCH_PORT)
-        onConnected?.invoke(true)
-        val label = if (currentTransport == Transport.USB) "USB" else "Wi-Fi ↔ $ip"
-        onStatus?.invoke("Connected via $label")
+        if (touchSender == null) {
+            val touchHost = if (currentTransport == Transport.USB) "127.0.0.1" else ip
+            Log.i(TAG, "[CM] Creating TouchSender → $touchHost:$TOUCH_PORT")
+            touchSender = TouchSender(touchHost, port = TOUCH_PORT)
+            onConnected?.invoke(true)
+            val label = if (currentTransport == Transport.USB) "USB" else "Wi-Fi ↔ $ip"
+            onStatus?.invoke("Connected via $label")
+        }
     }
 
     private fun onCodecConfiguredInternal() {
@@ -350,7 +362,8 @@ class ConnectionManager(private val context: Context) {
         val r = object : Runnable {
             override fun run() {
                 if (receiver == null) return
-                touchSender?.sendAck()
+                // Protocol v2: echo session_id in ACK so Windows can validate
+                touchSender?.sendAck(sessionId = currentSessionId)
                 mainHandler.postDelayed(this, 1000)
             }
         }

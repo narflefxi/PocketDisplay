@@ -97,7 +97,8 @@ private:
 
     // Per-session ID to detect stale ACKs from previous sessions during reconnect.
     // Each new Session gets a unique ID; ACK callback validates it matches.
-    uint64_t session_id_ = 0;
+    // Protocol v2: session_id is uint16_t on wire (0-65535 range).
+    uint16_t session_id_ = 0;
 
     std::thread stream_thread_;
     std::thread resend_thread_;

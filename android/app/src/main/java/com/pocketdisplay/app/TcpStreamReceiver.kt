@@ -15,7 +15,8 @@ class TcpStreamReceiver(
     private val port: Int,
     private val onStatus: (String) -> Unit,
     private val onDimensions: ((Int, Int) -> Unit)? = null,
-    private val onSenderIp: ((String) -> Unit)? = null,
+    // Protocol v2: session_id is passed along with sender IP for ACK validation
+    private val onSenderIp: ((String, Int) -> Unit)? = null,
     private val onWindowsSize: ((Int, Int) -> Unit)? = null,
     private val onCursorPos: ((Float, Float, Int) -> Unit)? = null,
     onCodecConfigured: (() -> Unit)? = null,
@@ -181,7 +182,8 @@ class TcpStreamReceiver(
                     }
 
                     // Notify touch-sender setup now that mode is settled.
-                    onSenderIp?.invoke(host)
+                    // Session_id will be updated when we receive stream_info (type 2).
+                    onSenderIp?.invoke(host, 0)  // 0 = unknown until stream_info arrives
 
                     val input = DataInputStream(socket.getInputStream())
                     val lenBuf = ByteArray(4)
@@ -204,6 +206,7 @@ class TcpStreamReceiver(
                                 decoder.configure(body, streamW, streamH)
                             }
                             2 -> {
+                                // Protocol v2: stream_info is 16 bytes: w, h, flags, session_id(2), padding(2)
                                 if (body.size >= 8) {
                                     val bb = ByteBuffer.wrap(body).order(ByteOrder.BIG_ENDIAN)
                                     val w = bb.int; val h = bb.int
@@ -212,6 +215,15 @@ class TcpStreamReceiver(
                                         onWindowsSize?.invoke(w, h)
                                     }
                                     if (body.size >= 12) onMode?.invoke(bb.int)
+                                    // Protocol v2: extract session_id from bytes 12-13 (big-endian uint16)
+                                    if (body.size >= 14) {
+                                        val sessionId = bb.short.toInt() and 0xFFFF
+                                        // Re-invoke onSenderIp with the session_id for ACK echoing
+                                        onSenderIp?.invoke(host, sessionId)
+                                        if (sessionId != 0) {
+                                            Log.i(TAG, "[SESSION] Received session_id=$sessionId from stream_info")
+                                        }
+                                    }
                                 }
                             }
                             3 -> {

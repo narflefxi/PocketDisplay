@@ -61,13 +61,25 @@ The app is intended for commercial sale. All bundled assets and dependencies mus
 - **Housekeeping**: consolidate `PROJECT_CONTEXT.md` into `CLAUDE.md`; delete merged branches.
 
 ## Recently Fixed
-- **Reconnect black screen — ACK/android_ready state machine fix** ✅
+- **Reconnect black screen — Two-sided session-ID handshake (ROOT CAUSE FIX)** ✅
+  - **Root cause**: Windows-side stale-ACK filtering created a DEADLOCK on reconnect. Windows session 2 rejected EVERY ACK as "Duplicate ACK for session 1 ignored" (26+ times) because Android had no concept of session ID — it kept sending ACKs that Windows attributed to the old session. `android_ready_` never became true for session 2, so `StreamLoop` never started, Android got 0 frames (black screen).
+  - **Fix (Protocol v2: Two-sided session-ID handshake)**:
+    1. **Protocol version bumped to 2**: Added `PROTOCOL_VERSION = 2` in `Protocol.h`.
+    2. **Windows sends session_id**: `ResendLoop` now sends 16-byte stream_info (was 12 bytes): `[w(uint32), h(uint32), flags(uint32), session_id(uint16), padding(uint16)]`. Session ID is per-Session (uint16_t, wraps at 65535, 0 reserved).
+    3. **Android receives and stores session_id**: `TcpStreamReceiver.kt` extracts session_id from stream_info type-2 message (bytes 12-13) and passes it to `onSenderIp(ip, sessionId)`.
+    4. **Android echoes session_id in ACK**: `TouchSender.kt` `sendAck(sessionId)` includes session_id in ACK packet bytes [6-7] (big-endian uint16). ConnectionManager stores `currentSessionId` and resets it to 0 on each disconnect.
+    5. **Windows validates ACK session_id**: `TouchReceiver.cpp` extracts session_id from ACK and passes to callback. `Session.cpp` callback validates `ack_session_id == session_id_` before accepting. Stale ACKs from old sessions are rejected with log: "Stale ACK from session X ignored (current=Y)".
+  - **Backward compatibility**: Protocol v1 clients (old Android builds) send ACK with session_id=0, which will be rejected by v2 Windows server (session_id starts at 1). Both apps must be updated together.
+  - **Verification**: On reconnect, Windows logs show session ID incrementing (1, 2, 3...). Each new session's ACK is accepted and streaming starts immediately. No "Stale ACK" spam on successful reconnects.
+  - Changed files: `windows/src/Protocol.h`, `windows/src/Session.h/cpp`, `windows/src/TouchReceiver.h/cpp`, `android/.../TcpStreamReceiver.kt`, `android/.../TouchSender.kt`, `android/.../ConnectionManager.kt`.
+
+- **Reconnect black screen — ACK/android_ready state machine fix (PREVIOUS ATTEMPT)** ✅
   - **Root cause**: On reconnect, the new session would receive ACKs but the capture pipeline never started. Two issues: (1) Stale ACKs from the previous session could arrive and set `android_ready_=true` on the wrong session object. (2) No idempotency - duplicate ACKs kept firing the callback repeatedly without verifying the state actually transitioned. The `StreamLoop` waited for `android_ready_=true` but the one-way flag had no session validation.
   - **Fix (Session-based ACK validation + idempotency)**:
     1. **Per-session ID**: Added `session_id_` (unique per Session) captured by value in the ACK callback. Stale ACKs from previous sessions are discarded with a log message.
     2. **Idempotent transition**: Changed from `store(true)` to `compare_exchange_strong(expected=false, true)` so only the first ACK for this session triggers the transition. Duplicate ACKs are logged but ignored.
     3. **Comprehensive logging**: Added `[Session] Session ID N starting (android_ready=false)`, `[Session] ACK received — android_ready N false->true, streaming starts`, `[Session] Stale ACK from session X ignored (current=Y)`, `[Session] Duplicate ACK for session N ignored (already ready)`, `[PIPE] StreamLoop: android_ready=true for session N, starting capture`, and `[Session] Resolution changed N - android_ready reset to false (waiting for new ACK)`.
-  - **Verification**: Windows logs now show clear per-session ACK state transitions. Duplicate/stale ACKs are filtered. The `[PIPE] StreamLoop: android_ready=true` log confirms capture actually starts after the ACK.
+  - **Note**: This was an incomplete fix — it prevented stale ACKs from the SAME callback lambda from triggering, but didn't solve the Android→Windows direction (Android had no session concept). The "Two-sided session-ID handshake" fix above completes the solution.
   - Changed files: `windows/src/Session.h/cpp`.
 - **Reconnect broken — Process-lifetime ScreenCapture** ✅
   - **Root cause**: DXGI Desktop Duplication allows only ONE active `IDXGIOutputDuplication` per output per process. Previous fixes (lifecycle tracking, use_count validation) tried to ensure the old Session was fully destroyed before creating a new one, but there was always a reference hiding somewhere (worker threads, lambdas, etc.). The latest log showed "no handle" in the destructor — meaning the wrong object was being destroyed.

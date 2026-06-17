@@ -4,13 +4,16 @@
 namespace pocketdisplay {
 
 constexpr uint16_t DEFAULT_PORT = 7777;
+constexpr uint8_t PROTOCOL_VERSION = 2;  // v2 adds session_id handshake for reconnect
 
 // Flags used in DirectSocketStreamer / Session to identify TCP message types.
 enum PacketFlags : uint8_t {
     FLAG_NONE         = 0x00,
     FLAG_CODEC_CONFIG = 0x01,  // SPS/PPS headers
     FLAG_KEYFRAME     = 0x02,  // IDR frame
-    FLAG_STREAM_INFO  = 0x04,  // 12-byte payload: uint32 w, uint32 h, uint32 mode_flags
+    // v2: stream_info now includes session_id (uint16) at end for reconnect validation
+    // Payload: uint32 w, uint32 h, uint32 mode_flags, uint16 session_id, uint16 padding
+    FLAG_STREAM_INFO  = 0x04,  // 16-byte payload (was 12 bytes in v1)
     FLAG_CURSOR_POS   = 0x08,  // 9-byte payload: float nx, float ny, uint8 cursor_type
 };
 

@@ -22,8 +22,9 @@ public:
     void Stop();
 
     // Called when Android sends a codec-ready ACK (touch packet type 8).
-    // Argument is the sender's IP address (empty string in USB/TCP mode).
-    void SetAckCallback(std::function<void(const std::string&)> cb) { ack_cb_ = std::move(cb); }
+    // Protocol v2: Android echoes session_id in bytes [6-7] of the ACK packet.
+    // Callback receives the session_id from the ACK; Session validates it matches current.
+    void SetAckCallback(std::function<void(uint16_t)> cb) { ack_cb_ = std::move(cb); }
 
     // Called each time Android connects (or reconnects) on the touch socket.
     void SetConnectCallback(std::function<void()> cb) { connect_cb_ = std::move(cb); }
@@ -40,7 +41,7 @@ private:
     void InjectUnicodeChar(uint32_t codepoint) const;
     void InjectVirtualKey(uint16_t vk, bool key_down) const;
 
-    std::function<void(const std::string&)> ack_cb_;
+    std::function<void(uint16_t)> ack_cb_;
     std::function<void()> connect_cb_;
     SOCKET            sock_         = INVALID_SOCKET;
     SOCKET            client_sock_  = INVALID_SOCKET;  // active TCP client
