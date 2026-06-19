@@ -45,7 +45,7 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 - Mirror & Extended mode: working
 - Touch/keyboard input: working
 - One-click GUI launch: working
-- Auto-reconnect: working (session-based; no process restart required)
+- Auto-reconnect: working (survives 10x rapid cycles + Mirror↔Extended mode switches)
 - Mode switching without restart: working (new HELLO tears down old Session, starts new one)
 - Wireless adb + USB adb coexist: working (adb reverse uses -s <serial> to avoid multi-device error)
 - WiFi→USB hot-switch: working (Phase 4b — always-on USB monitor + Android probe retry)
@@ -61,6 +61,15 @@ The app is intended for commercial sale. All bundled assets and dependencies mus
 - **Housekeeping**: consolidate `PROJECT_CONTEXT.md` into `CLAUDE.md`; delete merged branches.
 
 ## Recently Fixed
+- **Reconnect — full fix: teardown hang, ACK offset, encoder join, mode-switch black screen** ✅ (commit 9a181ce)
+  - **ACK byte-offset mismatch**: `TouchReceiver` was reading `session_id` from the wrong byte offset in the ACK packet, so the validated session_id was always garbage → every ACK was treated as stale. Fixed offset to match `TouchSender`'s encoding (bytes [6-7]).
+  - **TouchReceiver lifecycle race**: `TouchReceiver::Stop()` closed the listen socket and joined the accept thread, but the handler thread (which calls the ACK callback) was joined separately after — if a new Session started before the old handler thread exited, the old callback fired into the new session context. Fixed with a two-phase `SignalStop()` / `Join()` split so HELLO thread can signal stop without blocking, then `main.cpp` joins after the old session is fully replaced.
+  - **Teardown hang — lock-free socket Close**: `Session::Stop()` called `closesocket()` on the streaming socket to unblock `send()`, but the socket was shared across threads without synchronisation. Race: send-in-progress thread held the socket while Stop closed it, leading to use-after-free and a hang. Fixed by moving to a lock-free atomic `SOCKET` swap — `CloseStreamSocket()` atomically exchanges the socket with `INVALID_SOCKET` and closes the old value; `SendFrame()` reads the atomic and bails if invalid.
+  - **Encoder event-thread join hang (GetEvent NO_WAIT poll)**: ASYNC MFT (NVENC) `EventLoop` thread called `GetEvent(0, &ev)` (blocking wait with no timeout). On `Stop()`, signalling `running_=false` wasn't enough to unblock a thread sitting in `GetEvent`. Fixed by switching to `MF_EVENT_FLAG_NO_WAIT` (`GetEvent(MF_EVENT_FLAG_NO_WAIT, &ev)`) with a 10ms sleep on `MF_E_NO_EVENTS_AVAILABLE` — the loop exits within one sleep tick after `running_` is cleared.
+  - **Mode-switch black screen (ForceReinitialize on monitor change)**: Switching Mirror↔Extended changes the target DXGI output. The process-lifetime `ScreenCapture` reused the old `IDXGIOutputDuplication` for the new output, causing `AcquireNextFrame` to return stale/wrong-display frames (black screen). Fixed in `main.cpp`: compare incoming HELLO's `(adapter_idx, output_idx)` against `last_capture_adapter/output`; if different, call `process_capture->ForceReinitialize()` before creating the new Session.
+  - **Verification**: Reconnect survives 10x rapid cycles. Mirror↔Extended mode switch works without black screen. No teardown hangs under stress.
+  - Changed files: `windows/src/TouchReceiver.h/cpp`, `windows/src/Session.h/cpp`, `windows/src/HwEncoder.cpp`, `windows/src/main.cpp`.
+
 - **Session-ID ACK ordering race (black screen on EVERY connect)** ✅
   - **Root cause**: `onCodecConfiguredInternal()` fires the ACK loop immediately when codec config (type-1) arrives. `currentSessionId` is only populated when `onSenderIpReceived()` is called with a non-zero value from the stream_info (type-2) message. Because both messages arrive close together on the network thread and the callback is posted to the main thread, codec-config could be processed (and ACK sent) before `currentSessionId` was updated from 0. Windows rejects ACKs with session_id=0 as stale → `android_ready_` never becomes true → black screen on every connect.
   - **Fix (Android, `ConnectionManager.kt`)**: `onCodecConfiguredInternal` ACK loop now checks `currentSessionId != 0` before calling `sendAck()`. If still 0, retries every 100ms. Guarantees first ACK always carries the correct non-zero session_id.
