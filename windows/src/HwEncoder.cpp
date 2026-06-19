@@ -199,10 +199,17 @@ void HwEncoder::EventLoop() {
 
     while (running_) {
         ComPtr<IMFMediaEvent> event;
-        HRESULT hr = event_gen_->GetEvent(0, &event);   // blocking
+        // Non-blocking poll so the loop can re-check running_ on every iteration.
+        // MF_EVENT_FLAG_NO_WAIT returns immediately (E_PENDING or MF_E_NO_EVENTS)
+        // if no event is queued yet. Any FAILED return — "no event" or a transient
+        // MFT error — is treated the same: sleep 2ms and retry. The while(running_)
+        // guard at the top guarantees we exit within ~2ms of Close() setting
+        // running_=false, regardless of MFT / socket state. This prevents
+        // HwEncoder::Close() → event_thread_.join() from hanging on fast teardown.
+        HRESULT hr = event_gen_->GetEvent(MF_EVENT_FLAG_NO_WAIT, &event);
         if (FAILED(hr)) {
-            std::cerr << "[PIPE] EventLoop: GetEvent failed hr=0x" << std::hex << hr << std::dec << "\n";
-            break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            continue;
         }
 
         MediaEventType type = MEUnknown;

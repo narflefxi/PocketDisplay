@@ -18,6 +18,7 @@
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <vector>
 
 // â”€â”€ Console color helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -197,9 +198,14 @@ static std::string GetSubnetBroadcast(const std::string& local_ip) {
 // Owns the TCP socket handed off from TcpVideoServer's AcceptLoop.
 // Used for both USB (peer=127.0.0.1) and WiFi (Phase 3: video is now always TCP).
 struct DirectSocketStreamer : IStreamer {
-    SOCKET     sock_ = INVALID_SOCKET;
-    std::mutex mu_;
-    explicit DirectSocketStreamer(SOCKET s) : sock_(s) {}
+    SOCKET              sock_      = INVALID_SOCKET;  // guarded by mu_ during send
+    std::atomic<SOCKET> close_sock_{INVALID_SOCKET};  // closed by Close() without mu_
+    std::mutex          mu_;
+
+    // close_sock_ must be initialised alongside sock_ so Close() always
+    // has the real handle even if called before any SendFrame.
+    explicit DirectSocketStreamer(SOCKET s) : sock_(s), close_sock_(s) {}
+
     bool SendFrame(const uint8_t* data, size_t size, uint32_t, uint8_t flags) override {
         using namespace pocketdisplay;
         uint8_t type = 0;
@@ -219,10 +225,20 @@ struct DirectSocketStreamer : IStreamer {
             && sa(&type, 1)
             && (size == 0 || sa(data, static_cast<int>(size)));
     }
+
     void Close() override {
+        // Step 1 — close the raw socket WITHOUT holding mu_.  Any blocked send()
+        // inside SendFrame immediately receives WSAENOTSOCK / WSAECONNABORTED and
+        // returns, which releases mu_.  This breaks the Close()/SendFrame deadlock
+        // that hangs Session::Stop() on rapid reconnect.
+        SOCKET s = close_sock_.exchange(INVALID_SOCKET);
+        if (s != INVALID_SOCKET) closesocket(s);
+        // Step 2 — clear sock_ under mu_ so future SendFrame() calls see
+        // INVALID_SOCKET and return false without touching a closed handle.
         std::lock_guard<std::mutex> lk(mu_);
-        if (sock_ != INVALID_SOCKET) { closesocket(sock_); sock_ = INVALID_SOCKET; }
+        sock_ = INVALID_SOCKET;
     }
+
     ~DirectSocketStreamer() override { Close(); }
 };
 
@@ -387,6 +403,11 @@ int main(int argc, char* argv[]) {
     // â”€â”€ Session manager â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     std::mutex               session_mu;
     std::shared_ptr<Session> current_session;
+    // Sessions that have been signaled to stop but whose threads have not been
+    // fully joined yet. The HELLO callback signals and pushes here; the main loop
+    // performs the final Stop()/join off the hot path. Using a vector so rapid
+    // reconnects never call Stop() on the HELLO/accept thread.
+    std::vector<std::shared_ptr<Session>> dying_sessions;
 
     // PROCESS-LIFETIME SCREEN CAPTURE: Create once, reuse across all sessions.
     // This eliminates the DXGI DuplicateOutput race on reconnect. Sessions borrow
@@ -439,9 +460,15 @@ int main(int argc, char* argv[]) {
                   << "  screen=" << aW << "x" << aH << "\n";
         ResetColor();
 
-        // Stop existing session before creating the new one.
-        // With process-lifetime capture, the Session destructor does NOT release
-        // the duplication — it stays alive for the next session.
+        // Tear down the previous session non-blocking:
+        //  1. SignalStop() — sets running_=false and closes the socket WITHOUT waiting
+        //     for any blocked send() to return (fixes the Close()/mu_ deadlock on rapid
+        //     reconnect where stream_thread_ was mid-send() holding the socket mutex).
+        //  2. JoinStreamThread() — waits only for the stream thread so the new session
+        //     can safely use the process-lifetime ScreenCapture (max 33ms DXGI timeout).
+        //  3. Hand residual threads (resend/cursor) to dying_session for the main loop
+        //     to join — they exit within their next sleep interval (<100ms).
+        // This keeps the HELLO/accept thread unblocked, enabling fast reconnects.
         std::shared_ptr<Session> old_sess;
         {
             std::lock_guard<std::mutex> lk(session_mu);
@@ -449,12 +476,19 @@ int main(int argc, char* argv[]) {
         }
         if (old_sess) {
             SetColor(YELLOW);
-            std::cout << "  [HELLO] Stopping previous session (use_count="
+            std::cout << "  [HELLO] Signaling previous session stop (use_count="
                       << old_sess.use_count() << ")...\n";
             ResetColor();
-            old_sess->Stop();
-            old_sess.reset();  // Session destroyed, but capture lives on
-            std::cout << "  [HELLO] Previous session destroyed (capture preserved).\n";
+            old_sess->SignalStop();       // non-blocking: running_=false + socket closed
+            old_sess->JoinStreamThread(); // wait for capture thread (≤33ms)
+            // Hand the dying session to the main loop for final Stop()/join.
+            // Never call Stop() on the HELLO/accept thread — HwEncoder::Close()
+            // joins the encoder event thread which would block us here.
+            {
+                std::lock_guard<std::mutex> lk(session_mu);
+                dying_sessions.push_back(std::move(old_sess));
+            }
+            std::cout << "  [HELLO] Previous session signaled; starting new session.\n";
         }
 
         const bool is_usb = (peer == "127.0.0.1");
@@ -491,7 +525,15 @@ int main(int argc, char* argv[]) {
             std::cout << "  [HELLO] Initializing process-lifetime capture (adapter="
                       << mon.adapter << " output=" << mon.output << ")...\n";
             ResetColor();
-            if (!process_capture.Initialize(mon.adapter, mon.output)) {
+            bool cap_ok;
+            if (process_capture.IsInitialized()) {
+                // Monitor changed (Mirror <-> Extended) — force release old
+                // duplication and re-duplicate on the new output.
+                cap_ok = process_capture.ForceReinitialize(mon.adapter, mon.output);
+            } else {
+                cap_ok = process_capture.Initialize(mon.adapter, mon.output);
+            }
+            if (!cap_ok) {
                 SetColor(RED);
                 std::cerr << "  [HELLO] Failed to initialize capture — session start aborted.\n";
                 ResetColor();
@@ -616,11 +658,29 @@ int main(int argc, char* argv[]) {
     strncpy_s(g_gui.statusMsg, "Waiting for connection\u2026", 255);
 
     // â”€â”€ Main wait loop â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    // IMPORTANT: Never hold a shared_ptr<Session> copy outside the lock.
-    // The HELLO callback must be the sole owner when it destroys the old
-    // session so that IDXGIOutputDuplication is released before DuplicateOutput.
     while (g_running) {
         Sleep(100);
+
+        // Drain dying sessions whose stream_thread_ was already joined by the HELLO
+        // callback (SignalStop + JoinStreamThread). Only resend/cursor/encoder-event
+        // threads remain; they exit within their next sleep interval (<100ms total).
+        // Done here (not on the HELLO thread) so HwEncoder::Close() never blocks
+        // new-session creation.
+        {
+            std::vector<std::shared_ptr<Session>> to_join;
+            {
+                std::lock_guard<std::mutex> lk(session_mu);
+                to_join = std::move(dying_sessions);
+            }
+            for (auto& dying : to_join) {
+                std::cout << "  [Main] Joining dying session residual threads...\n";
+                dying->Stop();
+                dying.reset();
+                std::cout << "  [Main] Dying session fully stopped.\n";
+            }
+        }
+
+        // Detect naturally-ended session (stream failed, no new HELLO yet).
         bool ended = false;
         {
             std::lock_guard<std::mutex> lk(session_mu);
@@ -631,17 +691,16 @@ int main(int argc, char* argv[]) {
             SetColor(YELLOW);
             std::cout << "\n  [Main] Session ended \u2014 waiting for reconnect...\n";
             ResetColor();
-            // Move out under lock, then destroy outside lock.
             // Re-check under lock: HELLO callback may have already swapped in a new session.
-            std::shared_ptr<Session> dying;
+            std::shared_ptr<Session> ended_sess;
             {
                 std::lock_guard<std::mutex> lk(session_mu);
                 if (current_session && !current_session->IsRunning())
-                    dying = std::move(current_session);
+                    ended_sess = std::move(current_session);
             }
-            if (dying) {
-                dying->Stop();
-                dying.reset();  // Session destroyed, capture preserved (process-lifetime)
+            if (ended_sess) {
+                ended_sess->Stop();
+                ended_sess.reset();
             }
             g_gui.connected.store(false);
             strncpy_s(g_gui.statusMsg, "Disconnected \u2014 waiting\u2026", 255);
@@ -653,6 +712,8 @@ int main(int argc, char* argv[]) {
     {
         std::lock_guard<std::mutex> lk(session_mu);
         if (current_session) { current_session->Stop(); current_session.reset(); }
+        for (auto& d : dying_sessions) { d->Stop(); }
+        dying_sessions.clear();
     }
     hello_server.Close();
     if (disc_thread.joinable()) disc_thread.join();

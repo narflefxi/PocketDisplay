@@ -203,6 +203,23 @@ bool Session::Start() {
     return true;
 }
 
+// ── SignalStop / JoinStreamThread ─────────────────────────────────────────────
+
+void Session::SignalStop() {
+    running_.store(false);
+    // Close streamer immediately (without holding any lock) so any blocked
+    // send() inside stream_thread_ returns an error at once.
+    if (cfg_.streamer) cfg_.streamer->Close();
+}
+
+void Session::JoinStreamThread() {
+    if (stream_thread_.joinable()) {
+        std::cout << "  [Session] Joining stream_thread...\n";
+        stream_thread_.join();
+        std::cout << "  [Session] stream_thread joined.\n";
+    }
+}
+
 // ── Stop ──────────────────────────────────────────────────────────────────────
 
 void Session::Stop() {
@@ -213,9 +230,21 @@ void Session::Stop() {
     // Close streamer so any blocked send() returns immediately.
     if (cfg_.streamer) cfg_.streamer->Close();
 
-    if (stream_thread_.joinable())  stream_thread_.join();
-    if (resend_thread_.joinable())  resend_thread_.join();
-    if (cursor_thread_.joinable())  cursor_thread_.join();
+    if (stream_thread_.joinable()) {
+        std::cout << "  [Session] Joining stream_thread...\n";
+        stream_thread_.join();
+        std::cout << "  [Session] stream_thread joined.\n";
+    }
+    if (resend_thread_.joinable()) {
+        std::cout << "  [Session] Joining resend_thread...\n";
+        resend_thread_.join();
+        std::cout << "  [Session] resend_thread joined.\n";
+    }
+    if (cursor_thread_.joinable()) {
+        std::cout << "  [Session] Joining cursor_thread...\n";
+        cursor_thread_.join();
+        std::cout << "  [Session] cursor_thread joined.\n";
+    }
 
     if (encoder_) { encoder_->Close(); encoder_.reset(); }
     // Only release owned capture, not external (process-lifetime capture reused across sessions)

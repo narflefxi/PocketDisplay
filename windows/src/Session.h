@@ -81,6 +81,15 @@ public:
     // Signal all threads to stop and join them; idempotent.
     void Stop();
 
+    // Non-blocking stop signal: set running_=false and close the streaming socket.
+    // Worker threads exit on their next running_ check. Call Stop() later to join them.
+    void SignalStop();
+
+    // Join only stream_thread_. Must call SignalStop() first. Used by the HELLO
+    // callback to ensure the process-lifetime ScreenCapture is not accessed by
+    // two stream threads simultaneously before the new session starts.
+    void JoinStreamThread();
+
     bool IsRunning() const { return running_.load(); }
 
     // Handle a codec-ready ACK routed from the process-lifetime TouchReceiver.
