@@ -217,6 +217,12 @@ PocketDisplay/
 
 ---
 
+## Known Limitations
+
+- **DRM-protected video (Netflix, Disney+, Prime Video, etc.) shows as black on the phone.** Windows blocks screen capture of DRM/HDCP-protected content at the OS level (the Protected Media Path replaces the captured region with pure black). This is an OS restriction that affects *all* screen-capture and second-display tools — it is not a PocketDisplay bug. Non-DRM content (YouTube, local video, normal apps) works normally. Audio continues to play from the PC speakers. The app shows a brief informational hint when sustained black is detected so users aren't left wondering if the connection dropped.
+
+---
+
 ## Roadmap
 
 - [ ] Adaptive bitrate based on measured round-trip time

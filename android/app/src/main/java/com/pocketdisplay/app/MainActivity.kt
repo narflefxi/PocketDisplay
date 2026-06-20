@@ -71,6 +71,11 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
 
     private var transformLogged = false
 
+    // DRM black-frame detection — purely Android-side; no protocol change needed
+    private val drmCheckHandler = Handler(Looper.getMainLooper())
+    private var blackFrameConsecutive = 0
+    private var drmHintDismissed = false  // suppressed for rest of session after "Got it"
+
     // First-frame loading cover
     private val firstFrameHandler = Handler(Looper.getMainLooper())
     private val firstFrameTimeoutRunnable = Runnable {
@@ -138,6 +143,10 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         }
         binding.cardLicenses.setOnClickListener {
             startActivity(Intent(this, LicensesActivity::class.java))
+        }
+        binding.btnDrmDismiss.setOnClickListener {
+            drmHintDismissed = true
+            hideDrmHint()
         }
         binding.hudDisconnect.setOnClickListener { cm.userDisconnect() }
         binding.hudKeyboard.setOnClickListener { toggleKeyboard() }
@@ -219,6 +228,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
                 binding.videoLoadingCover.visibility = View.GONE
                 binding.textureView.animate().alpha(1f).setDuration(200).start()
                 videoShowPending = false
+                startDrmDetection()
             }
         }
         cm.onStreamMode = { flags ->
@@ -270,6 +280,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     // ── Streaming UI ──────────────────────────────────────────────────────────
 
     private fun showHomeUi() {
+        stopDrmDetection()
         hideKeyboard()
         binding.cursorOverlay.hide()
         binding.homePanel.visibility = View.VISIBLE
@@ -554,6 +565,68 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         binding.cursorOverlay.moveTo(p.first, p.second)
 
 
+    // -- DRM black-frame detection ------------------------------------------------
+
+    private val drmCheckRunnable = object : Runnable {
+        override fun run() {
+            if (cm.isSessionActive) {
+                checkForBlackFrames()
+                drmCheckHandler.postDelayed(this, 500L)
+            }
+        }
+    }
+
+    private fun startDrmDetection() {
+        drmCheckHandler.removeCallbacks(drmCheckRunnable)
+        blackFrameConsecutive = 0
+        drmCheckHandler.postDelayed(drmCheckRunnable, 500L)
+    }
+
+    private fun stopDrmDetection() {
+        drmCheckHandler.removeCallbacks(drmCheckRunnable)
+        blackFrameConsecutive = 0
+        drmHintDismissed = false
+        hideDrmHint()
+    }
+
+    private fun checkForBlackFrames() {
+        val tv = binding.textureView
+        if (tv.width == 0 || tv.height == 0) return
+        val bmp = try { tv.getBitmap(32, 18) } catch (_: Exception) { null } ?: return
+
+        // Sample 5×5 grid (25 points) — all must be exactly RGB(0,0,0)
+        // DRM protection produces pure black; dark-but-not-black content doesn't trigger
+        var allBlack = true
+        outer@ for (row in 1..5) {
+            for (col in 1..5) {
+                val x = (col * bmp.width / 6).coerceIn(0, bmp.width - 1)
+                val y = (row * bmp.height / 6).coerceIn(0, bmp.height - 1)
+                if ((bmp.getPixel(x, y) and 0x00FFFFFF) != 0) { allBlack = false; break@outer }
+            }
+        }
+        bmp.recycle()
+
+        if (allBlack) {
+            blackFrameConsecutive++
+            // 4 consecutive checks @ 500ms ≈ 2s sustained — conservative to avoid false positives
+            if (blackFrameConsecutive >= 4 && !drmHintDismissed) showDrmHint()
+        } else {
+            blackFrameConsecutive = 0
+            hideDrmHint()
+        }
+    }
+
+    private fun showDrmHint() {
+        if (binding.drmHintBanner.visibility == View.VISIBLE) return
+        binding.drmHintBanner.alpha = 0f
+        binding.drmHintBanner.visibility = View.VISIBLE
+        binding.drmHintBanner.animate().alpha(1f).setDuration(300).start()
+    }
+
+    private fun hideDrmHint() {
+        binding.drmHintBanner.visibility = View.GONE
+    }
+
     // -- TextureView / lifecycle --------------------------------------------------
 
     override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
@@ -595,6 +668,7 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
     override fun onDestroy() {
         super.onDestroy()
         statsHandler.removeCallbacks(statsRunnable)
+        drmCheckHandler.removeCallbacks(drmCheckRunnable)
         cm.destroy()
         multicastLock?.release()
         multicastLock = null

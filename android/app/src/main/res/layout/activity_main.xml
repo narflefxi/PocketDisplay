@@ -138,6 +138,60 @@
         </LinearLayout>
     </LinearLayout>
 
+    <!-- DRM hint banner — passive overlay shown when stream is sustained pure-black;
+         dismissed by user or auto-hidden when non-black frames return -->
+    <LinearLayout
+        android:id="@+id/drmHintBanner"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="14dp"
+        android:background="#CC000000"
+        android:visibility="gone"
+        android:layout_marginStart="32dp"
+        android:layout_marginEnd="32dp"
+        android:layout_marginBottom="28dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="6dp">
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Playing protected video?"
+                android:textColor="#FF4500"
+                android:textSize="13sp"
+                android:fontFamily="@font/space_grotesk_bold"
+                android:textStyle="bold" />
+            <Button
+                android:id="@+id/btnDrmDismiss"
+                android:layout_width="wrap_content"
+                android:layout_height="30dp"
+                android:text="Got it"
+                android:textSize="12sp"
+                android:textColor="#FF4500"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                style="@style/Widget.AppCompat.Button.Borderless" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Netflix, Disney+ and similar DRM content show as black here — that's a Windows restriction, not a connection problem. Everything else streams normally."
+            android:textColor="#CCFFFFFF"
+            android:textSize="12sp"
+            android:fontFamily="@font/space_grotesk_medium"
+            android:lineSpacingExtra="2dp" />
+    </LinearLayout>
+
     <!-- ── HOME PANEL — full-screen branded idle screen ─────────────── -->
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/homePanel"
