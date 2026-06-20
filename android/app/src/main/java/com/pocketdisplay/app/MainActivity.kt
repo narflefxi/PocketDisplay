@@ -594,14 +594,23 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
         if (tv.width == 0 || tv.height == 0) return
         val bmp = try { tv.getBitmap(32, 18) } catch (_: Exception) { null } ?: return
 
-        // Sample 5×5 grid (25 points) — all must be exactly RGB(0,0,0)
-        // DRM protection produces pure black; dark-but-not-black content doesn't trigger
+        // Sample 5×5 grid (25 points) — all must be near-black on every channel
+        // Exact-0 misses SW decoders (e.g. c2.android.avc.decoder) that output limited-range
+        // black (~16,16,16). BLACK_CHANNEL_MAX = 18 covers that plus a little decode noise;
+        // it is still far below any real content.
+        val BLACK_CHANNEL_MAX = 18
         var allBlack = true
         outer@ for (row in 1..5) {
             for (col in 1..5) {
                 val x = (col * bmp.width / 6).coerceIn(0, bmp.width - 1)
                 val y = (row * bmp.height / 6).coerceIn(0, bmp.height - 1)
-                if ((bmp.getPixel(x, y) and 0x00FFFFFF) != 0) { allBlack = false; break@outer }
+                val px = bmp.getPixel(x, y)
+                val r = (px shr 16) and 0xFF
+                val g = (px shr 8) and 0xFF
+                val b = px and 0xFF
+                if (r > BLACK_CHANNEL_MAX || g > BLACK_CHANNEL_MAX || b > BLACK_CHANNEL_MAX) {
+                    allBlack = false; break@outer
+                }
             }
         }
         bmp.recycle()
