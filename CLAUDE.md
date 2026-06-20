@@ -54,6 +54,14 @@ adb install -r app\build\outputs\apk\debug\app-debug.apk
 The app is intended for commercial sale. All bundled assets and dependencies must use permissive licenses (no GPL/copyleft, no CC-BY-SA).
 - **Cursor assets**: CC0 — safe.
 - **x264**: GPL-licensed — Now OPTIONAL (CMake option `POCKETDISPLAY_ENABLE_X264`, default OFF). Media Foundation H.264 encoder (hardware → software MFT fallback) is the default non-GPL encoder for commercial builds.
+- **Third-party license attributions**: Complete for v1. All components (VDD/MIT, fonts/OFL, AndroidX+Kotlin/Apache 2.0, cursors/CC0) documented in `THIRD_PARTY_LICENSES.md` at the repo root.
+  - Android: `THIRD_PARTY_LICENSES.md` bundled verbatim as `res/raw/third_party_licenses.txt`; viewable in-app via About → Open Source Licenses (`LicensesActivity`).
+  - Windows: CMake post-build copies it as `LICENSES.txt` next to `PocketDisplay.exe` on every build.
+
+## Pending for v1 Release
+- [x] Third-party license attributions complete (in-app + beside Windows .exe)
+- [ ] Via LA H.264 patent licence — email/register commercial use
+- [ ] Code signing (Windows .exe + Android APK)
 
 ## Known Issues / Deferred
 - **Resize cursor detection fails in custom-cursor apps** (e.g. Claude Desktop) — Windows-side cursor-type detection only matches standard `IDC_SIZE*` handles. Deferred.
@@ -62,6 +70,13 @@ The app is intended for commercial sale. All bundled assets and dependencies mus
 - **SW-fallback ~2s connect delay on affected phones** — when `VideoDecoder` falls back to a software AVC decoder (Exynos and similar), the hardware decoder is always tried first; the watchdog fires after 1.5 s with 0 decoded frames, then re-configures with software. Future optimization: cache the per-device decision across sessions, or investigate why Exynos rejects the stream (possibly H.264 profile/level mismatch from the Windows MF encoder).
 
 ## Recently Fixed
+- **Third-party license attributions complete for v1** ✅
+  - `THIRD_PARTY_LICENSES.md` at repo root is the single source of truth (VDD/MIT, Space Grotesk + Anton/OFL 1.1, AndroidX + Material + Kotlin stdlib/Apache 2.0, cursor assets/CC0). License bodies are verbatim.
+  - **Android**: file bundled as `res/raw/third_party_licenses.txt` (byte-for-byte copy). About panel has a new "Open Source Licenses" card (→ `LicensesActivity`) that loads `R.raw.third_party_licenses` into a scrollable, selectable, monospace read-only view.
+  - **Windows**: CMake post-build copies `THIRD_PARTY_LICENSES.md` → `LICENSES.txt` beside `PocketDisplay.exe` on every build (verified: 20060 bytes, matches source).
+  - **x264 GPL-free confirmed**: `POCKETDISPLAY_ENABLE_X264=OFF` (default). No `libx264*.dll` in Release output dir.
+  - Changed files: `android/.../LicensesActivity.kt` (new), `android/.../res/layout/activity_licenses.xml` (new), `android/.../res/raw/third_party_licenses.txt` (new), `AndroidManifest.xml`, `activity_main.xml`, `MainActivity.kt`, `windows/CMakeLists.txt`.
+
 - **Android SW decoder fallback for incompatible HW decoders (e.g. Samsung Exynos)** ✅ (commit 8de1bb1)
   - **Symptom**: On phones whose hardware H.264 decoder rejects the stream (e.g. `c2.exynos.h264.decoder` erroring with "Codec reported err 0xe/14 / EFAULT" right after `start()`), `decodedFrameCount` stays 0 → black screen, while cursor and touch continued to work. The failure is asynchronous — `configure()` / `start()` do not throw; the codec silently dies and the output drain thread exits with 0 frames.
   - **Fix (`VideoDecoder.kt`)**: Added a `scheduleHwFailureWatchdog()` that fires 1.5 s after `MediaCodec.start()`. If `packetCount > 0` (frames were fed) but `decodedFrameCount == 0` (nothing decoded), the watchdog concludes the HW decoder failed, enumerates `MediaCodecList.ALL_CODECS` for a software AVC decoder (`isSoftwareOnly` on API 29+, else name prefix `c2.android.*` or `OMX.google.*`), sets a session-scoped `useSoftwareFallback` flag, and calls `configure()` again with `force = true` to bypass the SPS-dedup early-return (which would otherwise silently skip the re-configure because the SPS is identical). If no software decoder is found, the HW decoder is kept and a warning is logged.

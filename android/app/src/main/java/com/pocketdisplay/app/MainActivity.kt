@@ -1,5 +1,6 @@
 package com.pocketdisplay.app
 
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.SurfaceTexture
 import android.os.Bundle
@@ -134,6 +135,9 @@ class MainActivity : AppCompatActivity(), TextureView.SurfaceTextureListener {
             binding.panelAbout.visibility = View.GONE
             binding.panelDashboard.visibility = View.VISIBLE
             setActiveNav(binding.navDashboard)
+        }
+        binding.cardLicenses.setOnClickListener {
+            startActivity(Intent(this, LicensesActivity::class.java))
         }
         binding.hudDisconnect.setOnClickListener { cm.userDisconnect() }
         binding.hudKeyboard.setOnClickListener { toggleKeyboard() }

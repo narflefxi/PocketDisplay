@@ -71,6 +71,9 @@ add_custom_command(TARGET PocketDisplay POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.ico"
         "$<TARGET_FILE_DIR:PocketDisplay>/icon.ico"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/../THIRD_PARTY_LICENSES.md"
+        "$<TARGET_FILE_DIR:PocketDisplay>/LICENSES.txt"
     COMMENT "Copying runtime assets to output dir")
 
 foreach(FONT Anton-Regular.ttf SpaceGrotesk-Medium.ttf SpaceGrotesk-Bold.ttf)
