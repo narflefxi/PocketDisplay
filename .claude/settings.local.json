@@ -74,7 +74,8 @@
       "Bash(gh issue *)",
       "Bash(./gradlew assembleDebug)",
       "PowerShell(cd C:\\\\Projects\\\\PocketDisplay\\\\android; $env:JAVA_HOME = \"C:\\\\Program Files\\\\Android\\\\Android Studio\\\\jbr\"; .\\\\gradlew assembleDebug 2>&1)",
-      "PowerShell(adb *)"
+      "PowerShell(adb *)",
+      "PowerShell(gh issue *)"
     ]
   }
 }
