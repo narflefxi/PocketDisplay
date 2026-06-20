@@ -1,6 +1,7 @@
 package com.pocketdisplay.app
 
 import android.media.MediaCodec
+import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.os.Build
 import android.util.Log
@@ -20,15 +21,19 @@ class VideoDecoder(
     @Volatile private var running = false
     @Volatile private var firstFrameDispatched = false
     private var lastSpsData: ByteArray? = null
-    private var decodedFrameCount = 0
-    private var packetCount = 0
+    @Volatile private var decodedFrameCount = 0
+    @Volatile private var packetCount = 0
+    // Session-scoped: true once HW failed; reset on disconnect so next session retries HW.
+    @Volatile private var useSoftwareFallback = false
 
-    fun configure(spsData: ByteArray, hintW: Int = 0, hintH: Int = 0) {
-        Log.d(TAG, "configure() called: spsData size=${spsData.size}, hintW=$hintW, hintH=$hintH")
+    @Synchronized
+    fun configure(spsData: ByteArray, hintW: Int = 0, hintH: Int = 0, force: Boolean = false) {
+        Log.d(TAG, "configure() called: spsData size=${spsData.size}, hintW=$hintW, hintH=$hintH, force=$force")
         Log.d(TAG, "  csd-0 hex: ${spsData.take(16).joinToString(" ") { String.format("%02X", it) }}${if (spsData.size > 16) "..." else ""}")
 
         // Deduplication: same SPS + decoder already running → no action needed.
-        if (lastSpsData != null && spsData.contentEquals(lastSpsData!!)) {
+        // Skipped when force=true (e.g. SW fallback re-configure with identical SPS).
+        if (!force && lastSpsData != null && spsData.contentEquals(lastSpsData!!)) {
             Log.d(TAG, "configure() dedup: same SPS, skipping")
             return
         }
@@ -57,7 +62,15 @@ class VideoDecoder(
                 format.setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
             }
 
-            c = MediaCodec.createDecoderByType("video/avc")
+            val swName = if (useSoftwareFallback) findSoftwareDecoder() else null
+            if (swName != null) {
+                c = MediaCodec.createByCodecName(swName)
+                Log.i(TAG, "[VideoDecoder] Using software decoder: $swName")
+            } else {
+                c = MediaCodec.createDecoderByType("video/avc")
+                Log.i(TAG, "[VideoDecoder] Using hardware decoder: ${c.name}")
+            }
+
             Log.d(TAG, "  Calling MediaCodec.configure()...")
             c.configure(format, surface, null, 0)
             Log.d(TAG, "  MediaCodec.configure() SUCCESS")
@@ -73,11 +86,51 @@ class VideoDecoder(
             lastSpsData = spsData.copyOf()
             onStatus("Decoder ready")
             onConfigured?.invoke()
+
+            // Schedule watchdog only for HW decoder — detects async silent failures (e.g. Exynos EFAULT).
+            if (!useSoftwareFallback) {
+                scheduleHwFailureWatchdog(spsData.copyOf(), hintW, hintH)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "configure() FAILED: ${e.message}", e)
             try { c?.release() } catch (_: Exception) {}
             onStatus("Decoder error: ${e.message}")
         }
+    }
+
+    // Fires 1.5 s after HW decoder start. If we've fed frames but decoded none, the HW
+    // codec failed silently (e.g. Exynos "EFAULT") — re-configure with a software decoder.
+    private fun scheduleHwFailureWatchdog(spsData: ByteArray, hintW: Int, hintH: Int) {
+        Thread({
+            Thread.sleep(1500)
+            if (!useSoftwareFallback && running && packetCount > 0 && decodedFrameCount == 0) {
+                val swName = findSoftwareDecoder()
+                if (swName != null) {
+                    Log.i(TAG, "[VideoDecoder] HW decoder failed (0 frames) — falling back to software: $swName")
+                    useSoftwareFallback = true
+                    configure(spsData, hintW, hintH, force = true)
+                } else {
+                    Log.w(TAG, "[VideoDecoder] HW decoder failed (0 frames in 1.5s) but no software AVC decoder found")
+                }
+            }
+        }, "VideoDecoder-HwWatchdog").also { it.isDaemon = true }.start()
+    }
+
+    private fun findSoftwareDecoder(): String? {
+        val list = MediaCodecList(MediaCodecList.ALL_CODECS)
+        for (info in list.codecInfos) {
+            if (info.isEncoder) continue
+            val types = try { info.supportedTypes } catch (_: Exception) { continue }
+            if (types.none { it.equals("video/avc", ignoreCase = true) }) continue
+            val isSw = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                info.isSoftwareOnly
+            } else {
+                info.name.startsWith("c2.android.", ignoreCase = true) ||
+                info.name.startsWith("OMX.google.", ignoreCase = true)
+            }
+            if (isSw) return info.name
+        }
+        return null
     }
 
     fun decode(frameData: ByteArray, isKeyframe: Boolean) {
@@ -192,6 +245,7 @@ class VideoDecoder(
     }
 
     fun resetForReconnect() {
+        useSoftwareFallback = false
         lastSpsData = null
     }
 
