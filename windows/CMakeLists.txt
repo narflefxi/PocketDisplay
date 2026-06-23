@@ -1,4 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
+
+# Honour MSVC_RUNTIME_LIBRARY target property (CMP0091) so we can link the
+# static CRT below. Must be set before project().
+set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
+
 project(PocketDisplay CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -36,6 +41,11 @@ add_executable(PocketDisplay
 
 set_source_files_properties(resources/resource.rc PROPERTIES
     COMPILE_FLAGS "/I\"${CMAKE_CURRENT_SOURCE_DIR}/resources\"")
+
+# Link the static CRT so target machines do not need the VC++ Redistributable.
+# Debug -> MultiThreadedDebug (/MTd), Release -> MultiThreaded (/MT).
+set_property(TARGET PocketDisplay PROPERTY
+    MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 target_include_directories(PocketDisplay PRIVATE src resources)
 if(POCKETDISPLAY_ENABLE_X264)
@@ -89,6 +99,20 @@ if(POCKETDISPLAY_ENABLE_X264 AND X264_RUNTIME_DLL)
             "${X264_RUNTIME_DLL}"
             "$<TARGET_FILE_DIR:PocketDisplay>/${X264_RUNTIME_DLL_NAME}")
 endif()
+
+# Stage the bundled adb (platform-tools) next to the exe so USB mode works
+# without the user having adb on PATH. All 3 files must stay together.
+set(PLATFORM_TOOLS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/installer/platform-tools")
+foreach(PT_FILE adb.exe AdbWinApi.dll AdbWinUsbApi.dll)
+    if(EXISTS "${PLATFORM_TOOLS_DIR}/${PT_FILE}")
+        add_custom_command(TARGET PocketDisplay POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_FILE_DIR:PocketDisplay>/platform-tools"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${PLATFORM_TOOLS_DIR}/${PT_FILE}"
+                "$<TARGET_FILE_DIR:PocketDisplay>/platform-tools/${PT_FILE}")
+    endif()
+endforeach()
 
 set(VDD_DRIVER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/drivers/virtual-display")
 foreach(VDD_FILE MttVDD.inf MttVDD.cat MttVDD.dll vdd_settings.xml)

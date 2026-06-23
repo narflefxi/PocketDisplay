@@ -189,6 +189,11 @@ License, Version 2.0:
 - com.google.android.material:material (Material Components for Android) — Copyright The Android Open Source Project
 - org.jetbrains.kotlin:kotlin-stdlib (Kotlin Standard Library) — Copyright 2010-2024 JetBrains s.r.o. and Kotlin Programming Language contributors
 
+The Windows application bundles the following tool, also licensed under the
+Apache License, Version 2.0:
+
+- Android SDK Platform-Tools (adb) — Copyright The Android Open Source Project
+
 The full Apache License 2.0 text is reproduced once below.
 
 ```

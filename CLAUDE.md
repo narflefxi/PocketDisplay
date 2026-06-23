@@ -60,8 +60,9 @@ The app is intended for commercial sale. All bundled assets and dependencies mus
 
 ## Pending for v1 Release
 - [x] Third-party license attributions complete (in-app + beside Windows .exe)
+- [x] Windows installer packaging (Inno Setup, self-contained, unsigned)
 - [ ] Via LA H.264 patent licence — email/register commercial use
-- [ ] Code signing (Windows .exe + Android APK)
+- [ ] Code signing (Windows .exe + Android APK) — installer is intentionally unsigned for now
 
 ## Known Issues / Deferred
 - **Resize cursor detection fails in custom-cursor apps** (e.g. Claude Desktop) — Windows-side cursor-type detection only matches standard `IDC_SIZE*` handles. Deferred.
@@ -71,6 +72,14 @@ The app is intended for commercial sale. All bundled assets and dependencies mus
 - **SW-fallback ~2s connect delay on affected phones** — when `VideoDecoder` falls back to a software AVC decoder (Exynos and similar), the hardware decoder is always tried first; the watchdog fires after 1.5 s with 0 decoded frames, then re-configures with software. Future optimization: cache the per-device decision across sessions, or investigate why Exynos rejects the stream (possibly H.264 profile/level mismatch from the Windows MF encoder).
 
 ## Recently Fixed
+- **Windows installer + self-contained build (Inno Setup)** ✅
+  - **Self-contained exe**: `windows/CMakeLists.txt` now links the **static CRT** (`MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"`, with `CMAKE_POLICY_DEFAULT_CMP0091 NEW`), so target machines no longer need the VC++ Redistributable. Verified via `dumpbin /dependents`: no `MSVCP140.dll` / `VCRUNTIME140.dll`.
+  - **Bundled adb (USB mode)**: `windows/installer/platform-tools/` holds `adb.exe` + `AdbWinApi.dll` + `AdbWinUsbApi.dll` (sourced from the local Android SDK). A CMake post-build step stages them next to the exe. `FindAdbExe()` in `src/AdbUsbSetup.cpp` now checks `exe-dir\platform-tools\adb.exe` **FIRST** (before PATH / ANDROID_HOME / LocalAppData), so the bundled adb always wins regardless of the user's PATH.
+  - **Exe metadata + icon**: `windows/resources/resource.rc` now has a `VS_VERSION_INFO` block (ProductName/CompanyName/FileDescription = "PocketDisplay", File/ProductVersion 0.1.0.0) plus the `icon.ico` app icon — gives unsigned SmartScreen "More info" a clean product name.
+  - **Installer**: `windows/installer/PocketDisplay.iss` — AppName/Publisher "PocketDisplay", AppVersion 0.1.0, `{autopf}\PocketDisplay`, `PrivilegesRequired=admin`. Bundles the exe, `platform-tools\`, `drivers\virtual-display\` (MttVDD.inf/.cat/.dll + vdd_settings.xml), fonts, logo, icon, and LICENSES.txt — all pulled from the Release output dir. Start Menu + optional desktop shortcut (icon.ico). **VDD is NOT installed by Setup** — the app self-installs it at runtime when Extended mode is chosen; Setup only bundles the files. Uninstaller best-effort removes the `Root\MttVDD` device + driver package via `uninstall-vdd.ps1` (pnputil, run hidden, errors ignored). Output: `windows/installer/dist/PocketDisplay-Setup.exe` (gitignored build artifact). **Unsigned by design** — no signing steps added. Compiled with Inno Setup 6 (`ISCC.exe`); no console-window flash (UninstallRun uses `runhidden`).
+  - **License compliance**: adb is Apache 2.0 — added "Android SDK Platform-Tools (adb) — Copyright The Android Open Source Project" to the Apache 2.0 section of root `THIRD_PARTY_LICENSES.md` (reusing the existing license body) and re-synced byte-for-byte to `android/.../res/raw/third_party_licenses.txt`; APK rebuilt so the in-app license screen reflects it.
+  - Changed files: `windows/CMakeLists.txt`, `windows/src/AdbUsbSetup.cpp`, `windows/resources/resource.rc`, `windows/installer/PocketDisplay.iss` (new), `windows/installer/uninstall-vdd.ps1` (new), `windows/installer/platform-tools/*` (new), `THIRD_PARTY_LICENSES.md`, `android/.../res/raw/third_party_licenses.txt`, `.gitignore`.
+
 - **DRM graceful hint — passive banner when protected content is detected** ✅
   - **Limitation**: Windows DXGI Desktop Duplication blanks the captured region to pure RGB(0,0,0) when DRM/HDCP-protected content (Netflix, Disney+, etc.) is playing. Detected on Android from decoded frame content — no Windows-side change needed.
   - **Why no protocol change**: The `stream_info` `flags` field is sent by `ResendLoop` only while `!android_ready_` (stops after ACK); it cannot carry live per-frame DRM events. A new protocol message type would require a version bump and coordinated builds. Android-side frame analysis is the correct approach.

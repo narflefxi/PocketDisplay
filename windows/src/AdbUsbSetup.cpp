@@ -17,6 +17,16 @@ namespace fs = std::filesystem;
 static bool FileExists(const fs::path& p) { return fs::is_regular_file(p); }
 
 static fs::path FindAdbExe() {
+    // 1) Bundled adb in a platform-tools\ folder next to our own .exe. This is
+    //    checked FIRST so the installer-bundled adb is always used regardless of
+    //    the user's PATH or installed Android SDK.
+    {
+        char exePath[MAX_PATH] = {};
+        if (GetModuleFileNameA(nullptr, exePath, MAX_PATH) > 0) {
+            fs::path cand = fs::path(exePath).parent_path() / "platform-tools" / "adb.exe";
+            if (FileExists(cand)) return cand;
+        }
+    }
     {
         char pathBuf[32768] = {};
         if (GetEnvironmentVariableA("PATH", pathBuf, sizeof(pathBuf)) > 0) {
