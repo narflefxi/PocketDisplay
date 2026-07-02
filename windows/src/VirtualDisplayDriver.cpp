@@ -42,7 +42,7 @@ static fs::path GetExeDir() {
     }
 }
 
-static bool IsProcessElevated() {
+bool IsProcessElevated() {
     HANDLE token = nullptr;
     if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
     TOKEN_ELEVATION elevation = {};

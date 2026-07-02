@@ -6,6 +6,7 @@
 #include "VirtualDisplayDriver.h"
 
 #include <windows.h>
+#include <shellapi.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <iostream>
@@ -301,6 +302,17 @@ static bool SetVddResolution(int target_w, int target_h) {
 // â”€â”€ main â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 int main(int argc, char* argv[]) {
+    // â”€â”€ Headless helper mode: one-time VDD driver install â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // Invoked as an elevated child process (see the Extended-mode auto-elevate
+    // path below). No GUI, no sockets, no visible console window. Exit code 0
+    // means the virtual display is active; non-zero means it failed.
+    if (argc == 2 && std::string(argv[1]) == "--install-vdd") {
+        DWORD pids[2];
+        if (GetConsoleProcessList(pids, 2) <= 1) FreeConsole();
+        const std::string err = EnsureVirtualDisplayDriverForExtendedMode();
+        return err.empty() ? 0 : 1;
+    }
+
     g_con = GetStdHandle(STD_OUTPUT_HANDLE);
     WSADATA wsa{}; WSAStartup(MAKEWORD(2, 2), &wsa);
 
@@ -494,6 +506,51 @@ int main(int argc, char* argv[]) {
         const bool is_usb = (peer == "127.0.0.1");
 
         // VDD / resolution setup for Extended mode.
+        if (extend) {
+            // First-time install on a non-elevated process: the driver install
+            // (DiInstallDriver) requires Administrator. Elevate a hidden helper
+            // just for the one-time install instead of silently falling back.
+            // Never triggers if the VDD is already active or we're already elevated.
+            if (!HasActiveVirtualDisplay() && !IsProcessElevated()) {
+                SetColor(CYAN);
+                std::cout << "  [HELLO] Extended mode: requesting one-time Administrator setup"
+                             " for the virtual display driver...\n";
+                ResetColor();
+                strncpy_s(g_gui.statusMsg, "Extended mode: one-time Administrator setup\u2026", 255);
+
+                wchar_t exePath[MAX_PATH];
+                GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+
+                SHELLEXECUTEINFOW sei = { sizeof(sei) };
+                sei.fMask        = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NO_CONSOLE;
+                sei.lpVerb       = L"runas";
+                sei.lpFile       = exePath;
+                sei.lpParameters = L"--install-vdd";
+                sei.nShow        = SW_HIDE;
+
+                bool elevate_ok = false;
+                if (ShellExecuteExW(&sei) && sei.hProcess) {
+                    const DWORD wait = WaitForSingleObject(sei.hProcess, 60000);
+                    DWORD exit_code = 1;
+                    if (wait == WAIT_OBJECT_0) GetExitCodeProcess(sei.hProcess, &exit_code);
+                    CloseHandle(sei.hProcess);
+                    elevate_ok = (wait == WAIT_OBJECT_0 && exit_code == 0);
+                }
+                // else: ShellExecuteExW failed, e.g. UAC prompt was cancelled
+                // (GetLastError() == ERROR_CANCELLED) or exe couldn't launch.
+
+                if (!elevate_ok) {
+                    SetColor(YELLOW);
+                    std::cerr << "  [HELLO] Extended mode setup was cancelled or failed"
+                                 " \u2014 staying in Mirror mode.\n";
+                    ResetColor();
+                    strncpy_s(g_gui.statusMsg,
+                        "Extended mode needs a one-time Administrator setup. Setup was "
+                        "cancelled \u2014 staying in Mirror mode.", 255);
+                    extend = false;  // do not silently misrepresent this session as Extended
+                }
+            }
+        }
         if (extend) {
             if (const std::string e = EnsureVirtualDisplayDriverForExtendedMode(); !e.empty()) {
                 SetColor(YELLOW);
